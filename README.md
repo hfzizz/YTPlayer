@@ -21,23 +21,32 @@ A PiP-style **music player for regular YouTube**. It's a floating card that stay
 **2. Zen only: Search and Queue on Zen's media card**
 1. Install [Sine](https://github.com/CosmoCreeper/Sine) with its installer from the Releases page, then restart Zen.
 2. In Zen's Settings, open the **Sine** section and turn on installing **JavaScript mods from unofficial sources**.
-3. Add a mod from a repository: `hfzizz/YTPlayer`, folder `zen-mod`. Restart Zen.
+3. Add a mod from a repository by typing `hfzizz/zen-ytmini` (no folder), then restart Zen.
 4. Check it: play a YouTube video and switch to another tab. Zen's media card at the bottom of the sidebar now has 🔍 and ☰. Settings → *Zen Browser* in the extension says **"Zen mod detected"**.
 
 > **Why Sine?** Zen's built-in *Mods* setting only supports CSS (themes), and adding working buttons and a panel needs JavaScript. Sine adds JS-mod support to Zen. Without it you still get Zen's next/previous following your queue, and search/queue in the floating card, popup and sidebar.
 
 ## Features
 
-- **Floating player card on every website.** Drag it anywhere, collapse it to one slim row, or hide it until the next song. It shows the title and channel only, with no video.
+- **Floating player card on every website.** It shows the title and channel only, with no video.
+  - **Drag** it anywhere and **resize** it freely from any edge or corner. The layout follows the size: a tiny play button with the title, a slim one-row bar (with a progress bar when wide), or the full card. When it's tall, the queue fills the extra space. Position and size are shared by all tabs.
+  - **Close (✕)** hides it in every tab until you show it again from the toolbar popup, with `Alt+Shift+F`, or from the settings page.
 - **Search YouTube from the player.** Each result can be:
   - played now (click the row)
   - played next
   - added to the end of the queue (+)
-- **Your own queue:**
-  - drag to reorder, × to remove
-  - saved between sessions
-  - stops when it runs out
-  - played songs stay visible, dimmed
+
+  When nothing is playing, "play next" and + just start the song. A paused song still counts as playing.
+- **Your own queue: Now Playing + Up Next.**
+  - The playing song is in the player; the queue lists what's coming next.
+  - A finished song drops off the list automatically. ⏮ can still go back to it.
+  - Drag to reorder, × to remove, click a song to play it now.
+  - Saved between sessions. Playback stops when Up Next runs out.
+- **Smooth transitions:**
+  - The next song starts the moment the current one ends, skipping YouTube's end screen and autoplay countdown.
+  - Optional fade out / fade in between songs (0–12 s, 4 s by default).
+  - A "Next: …" hint on the player in the last 10 seconds.
+  - Optional: skip trailing silence at the end of a song (experimental, off by default).
 - **Plays in the background.** If no YouTube tab is open, one is opened (pinned by default) to do the actual playing. It's shown for a moment, because Firefox won't start audio in a tab that was never visited, and then you're switched back.
 - **Zen Browser and media keys.** Next/previous in Zen's built-in media player, and your keyboard's media keys, skip through **your queue**. With the optional [Zen mod](#zen-browser-extend-zens-media-player), Zen's media card also gets Search and Queue.
 - **Controls:** seek, play/pause, previous/next, volume and mute, speed from 0.25× to 2×, captions.
@@ -52,6 +61,7 @@ A PiP-style **music player for regular YouTube**. It's a floating card that stay
   - `Alt+Shift+P`: play / pause
   - `Alt+Shift+→` / `Alt+Shift+←`: next / previous
   - `Alt+Shift+M`: open the mini window
+  - `Alt+Shift+F`: show / hide the floating player
 - **Keys inside the popup, sidebar and window:**
   - `Space`/`K`: play/pause
   - `N` / `P`: next / previous
@@ -63,35 +73,23 @@ A PiP-style **music player for regular YouTube**. It's a floating card that stay
 
 ## Zen Browser: extend Zen's media player
 
-Zen has its own media card at the bottom of the sidebar. With the optional **Zen mod** in [`zen-mod/`](zen-mod/), that card gets 🔍 **Search** and ☰ **Queue** buttons. Clicking one makes the card grow upward and shows our search or queue right inside it.
+Zen has its own media card at the bottom of the sidebar. With the optional **Zen mod** [`hfzizz/zen-ytmini`](https://github.com/hfzizz/zen-ytmini), that card gets 🔍 **Search** and ☰ **Queue** buttons. Clicking one makes the card grow upward and shows our search or queue right inside it.
 
 <img src="docs/zen-card-mockup.png" width="70%" alt="Mock-up: Zen's media card with the Search panel open">
 
 <sub>Mock-up: Zen's card is drawn in HTML here; the panel inside it is the real extension page.</sub>
 
-**Why a mod?** Zen's media card is part of the browser's own interface, and extensions are sandboxed away from it. A Zen *mod* (a userChrome script) can change Zen's interface. This one is small: it adds the buttons and embeds the extension's panel page (`src/zen/panel.html`) in the card. Search, queue and playback all still run in the extension. The mod runs with full browser privileges, so read [`ytmini-zen.uc.js`](zen-mod/ytmini-zen.uc.js) before installing it.
+**Why a mod?** Zen's media card is part of the browser's own interface, and extensions are sandboxed away from it. A Zen *mod* (a userChrome script) can change Zen's interface. This one is small: it adds the buttons and embeds the extension's panel page (`src/zen/panel.html`) in the card. Search, queue and playback all still run in the extension. The mod runs with full browser privileges, so read [`ytmini-zen.uc.js`](https://github.com/hfzizz/zen-ytmini/blob/main/ytmini-zen.uc.js) before installing it.
 
 - **Next/previous on Zen's card follow your queue**, even without the mod.
 - While the mod is active, our floating card hides itself, so you only see one player. You can turn this off in Settings → Zen Browser.
 
-**Install with [Sine](https://github.com/CosmoCreeper/Sine)** (Zen mod manager):
-
-1. Install the YT Mini Player extension first.
-2. In Sine's settings, allow installing JavaScript mods from unofficial sources.
-3. Add a mod from a repository: `hfzizz/YTPlayer`, folder `zen-mod`.
-4. Restart Zen.
-
-**Install with [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig)** (manual):
-
-1. Set up fx-autoconfig for your Zen profile (see its README).
-2. Copy `zen-mod/ytmini-zen.uc.js` into `<profile>/chrome/JS/`.
-3. Copy `zen-mod/chrome.css` into `<profile>/chrome/CSS/` **renamed to `ytmini-zen.uc.css`**. fx-autoconfig only loads `*.uc.css` files.
-4. In `about:support`, click **Clear startup cache…**, then restart Zen.
+**Install:** follow the steps in [Install in Zen](#install-in-zen-or-firefox) above, or the [mod's README](https://github.com/hfzizz/zen-ytmini#install), which also covers manual fx-autoconfig installs and troubleshooting. If you installed the old copy from this repo (folder `zen-mod`), remove it in Sine first.
 
 **Limits:**
 - Zen only shows its media card while media plays in a tab you're *not* looking at. That's Zen's own behaviour. On the YouTube tab itself, use the toolbar popup.
 - The buttons appear on every media card, not only YouTube's. They always control the YouTube player.
-- `theme.json` follows Sine's mod format as far as it's publicly documented. If Sine doesn't pick up the script, use the fx-autoconfig steps.
+- Not working? Open the Browser Console (Ctrl+Shift+J), filter for `YT Mini`, and see the [troubleshooting table](https://github.com/hfzizz/zen-ytmini#troubleshooting).
 
 ## Releasing a signed build (maintainer)
 

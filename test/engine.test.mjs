@@ -34,8 +34,8 @@ const ev = () => { const l = []; return { addListener: f => l.push(f), removeLis
 }
 
 // ---------- background queue engine ----------
-function makeBrowser() {
-  const local = {}, sync = {};
+function makeBrowser(presetLocal = {}) {
+  const local = structuredClone(presetLocal), sync = {};
   const area = (store) => ({
     get: async (k) => { if (typeof k === 'string') return k in store ? { [k]: structuredClone(store[k]) } : {}; if (k && typeof k === 'object') { const o = { ...k }; for (const x in k) if (x in store) o[x] = store[x]; return o; } return { ...store }; },
     set: async (p) => { Object.assign(store, structuredClone(p)); },
@@ -59,8 +59,8 @@ function port(name, tabId) {
   const p = { name, sender: tabId ? { tab: { id: tabId } } : {}, sent: [], onMessage: ev(), onDisconnect: ev(), postMessage(m) { this.sent.push(structuredClone(m)); } };
   return p;
 }
-async function boot() {
-  const browser = makeBrowser();
+async function boot(presetLocal) {
+  const browser = makeBrowser(presetLocal);
   const ctx = vm.createContext({ browser, console, setTimeout, clearTimeout, AbortController, navigator: { language: 'en' }, structuredClone });
   ctx.globalThis = ctx;
   for (const f of ['src/shared/settings.js', 'src/search.js', 'src/background.js']) vm.runInContext(fs.readFileSync(REPO + f, 'utf8'), ctx, { filename: f });
@@ -72,80 +72,111 @@ async function boot() {
   return { browser, ui, q, cmd, lastQueue, ctx };
 }
 const item = (id) => ({ videoId: id, title: 'T' + id, channel: 'C', duration: '1:00' });
-const ids = (qq) => qq.items.map(i => i.videoId).join(',');
+const ids = (list) => list.map(i => i.videoId).join(',');
+const upNext = (t) => ids(t.lastQueue().upNext);
+const nowId = (t) => t.lastQueue().nowPlaying && t.lastQueue().nowPlaying.videoId;
+const ytState = (yt, s) => { yt.onMessage.fire({ type: 'state', state: { title: 'T' + s.videoId, playing: true, currentTime: 10, ended: false, lastPlayed: Date.now(), ...s } }); return tick(); };
+const loads = (yt) => yt.sent.filter(m => m.cmd === 'load').map(m => m.videoId).join(',');
 
 {
-  // No YouTube tab: play now opens a pinned background tab
+  // Nothing playing (no YouTube tab): + plays right away in a new pinned tab, not queued
   const t = await boot();
-  await t.q('playNow', { item: item('aaa') });
-  ok(t.browser._created.length === 1 && t.browser._created[0].url.endsWith('v=aaa') && t.browser._created[0].pinned === true, 'playNow opens pinned tab');
-  ok(t.lastQueue().current === 0 && ids(t.lastQueue()) === 'aaa', 'queue has playing item');
+  await t.q('add', { item: item('aaa') });
+  ok(t.browser._created.length === 1 && t.browser._created[0].url.endsWith('v=aaa') && t.browser._created[0].pinned === true, 'idle add opens pinned tab and plays');
+  ok(nowId(t) === 'aaa' && upNext(t) === '', 'idle add becomes now playing, Up Next empty');
 
-  // The new tab connects and starts playing -> focus returns to the original tab
   const yt = port('yt', 100); t.browser.runtime.onConnect.fire(yt); await tick();
-  ok(yt.sent.some(m => m.type === 'config' && m.queueActive === true), 'yt tab told queue is active');
-  yt.onMessage.fire({ type: 'state', state: { videoId: 'aaa', title: 'Taaa', playing: true, currentTime: 1, lastPlayed: 5 } }); await tick();
+  await ytState(yt, { videoId: 'aaa' });
   ok(t.browser._updated.some(([id, o]) => id === 1 && o.active), 'focus returned to original tab');
 
-  // add + playNext ordering
+  // Playing: + queues at the end, play-next at the front
   await t.q('add', { item: item('ccc') });
   await t.q('playNext', { item: item('bbb') });
-  ok(ids(t.lastQueue()) === 'aaa,bbb,ccc', 'playNext inserts after current: ' + ids(t.lastQueue()));
+  await t.q('add', { item: item('ddd') });
+  ok(upNext(t) === 'bbb,ccc,ddd' && nowId(t) === 'aaa', 'playing: add/playNext queue up: ' + upNext(t));
+  const cfg = yt.sent.filter(m => m.type === 'config').at(-1);
+  ok(cfg.queueActive === true && cfg.upNextAvailable === true && cfg.crossfadeSeconds === 4 && cfg.skipSilence === false, 'tab config: ' + JSON.stringify(cfg));
 
-  // next -> loads bbb via the tab (no new tab)
-  await t.cmd('next');
-  ok(yt.sent.at(-2)?.cmd === 'load' || yt.sent.some(m => m.cmd === 'load' && m.videoId === 'bbb'), 'next loads bbb in existing tab');
-  ok(t.lastQueue().current === 1 && t.browser._created.length === 1, 'current=1, no extra tab');
+  // Paused still counts as playing
+  await ytState(yt, { videoId: 'aaa', playing: false });
+  await t.q('add', { item: item('eee') });
+  ok(upNext(t) === 'bbb,ccc,ddd,eee' && !loads(yt).includes('eee'), 'paused: add queues instead of playing');
+  await t.q('remove', { index: 3 });
 
-  // video ends -> ccc
-  yt.onMessage.fire({ type: 'state', state: { videoId: 'bbb', title: 'Tbbb', playing: true, currentTime: 1, lastPlayed: 6 } }); await tick();
+  // Song ends -> removed from list, next one plays
   yt.onMessage.fire({ type: 'ended' }); await tick();
-  ok(yt.sent.some(m => m.cmd === 'load' && m.videoId === 'ccc') && t.lastQueue().current === 2, 'ended advances to ccc');
+  ok(nowId(t) === 'bbb' && upNext(t) === 'ccc,ddd' && loads(yt).endsWith('bbb'), 'ended: finished song dropped, next plays');
+  await ytState(yt, { videoId: 'bbb' });
 
-  // end of queue -> stop (stopAutoplay), no load
-  yt.onMessage.fire({ type: 'state', state: { videoId: 'ccc', title: 'Tccc', playing: true, currentTime: 1, lastPlayed: 7 } }); await tick();
+  // next / prev with hidden history
+  await t.cmd('next');
+  ok(nowId(t) === 'ccc' && upNext(t) === 'ddd', 'next advances');
+  await ytState(yt, { videoId: 'ccc', currentTime: 30 });
+  await t.cmd('prev');
+  ok(yt.sent.at(-1).cmd === 'seek' && yt.sent.at(-1).time === 0, 'prev after 3s restarts');
+  await ytState(yt, { videoId: 'ccc', currentTime: 1 });
+  await t.cmd('prev');
+  ok(nowId(t) === 'bbb' && upNext(t) === 'ccc,ddd' && loads(yt).endsWith('bbb'), 'prev goes back to history, current returns to Up Next');
+  ok(t.lastQueue().historyCount === 1 && !('history' in t.lastQueue()), 'history hidden from UI (count only)');
+  await ytState(yt, { videoId: 'bbb' });
+
+  // Media keys / Zen next
+  yt.onMessage.fire({ type: 'action', action: 'next' }); await tick();
+  ok(nowId(t) === 'ccc' && upNext(t) === 'ddd', 'media key next follows queue');
+  await ytState(yt, { videoId: 'ccc' });
+
+  // play(i), move
+  await t.q('add', { item: item('fff') });
+  await t.q('add', { item: item('ggg') });          // ddd,fff,ggg
+  await t.q('move', { from: 2, to: 0 });            // ggg,ddd,fff
+  ok(upNext(t) === 'ggg,ddd,fff', 'move reorders: ' + upNext(t));
+  await t.q('play', { index: 1 });                  // play ddd, leaves ggg,fff
+  ok(nowId(t) === 'ddd' && upNext(t) === 'ggg,fff', 'play(i) plays that one, rest stay');
+  await ytState(yt, { videoId: 'ddd' });
+
+  // User plays some other video in the tab during a session
+  await ytState(yt, { videoId: 'zzz', title: 'Other' });
+  ok(nowId(t) === 'zzz' && upNext(t) === 'ggg,fff', 'manual video becomes now playing, Up Next kept');
+
+  // Clear, then the last song ends -> stop
+  await t.q('clear');
+  ok(upNext(t) === '', 'clear empties Up Next');
   const before = yt.sent.length;
   yt.onMessage.fire({ type: 'ended' }); await tick();
   const after = yt.sent.slice(before);
-  ok(after.some(m => m.cmd === 'stopAutoplay') && !after.some(m => m.cmd === 'load'), 'end of queue stops');
+  ok(after.some(m => m.cmd === 'stopAutoplay') && !after.some(m => m.cmd === 'load') && nowId(t) === null, 'end of queue stops');
+  ok(yt.sent.filter(m => m.type === 'config').at(-1).queueActive === false, 'queue session over: YouTube behaves normally again');
 
-  // prev: >3s restarts, otherwise previous item
-  yt.onMessage.fire({ type: 'state', state: { videoId: 'ccc', title: 'Tccc', playing: true, currentTime: 30, lastPlayed: 7 } }); await tick();
-  await t.cmd('prev');
-  ok(yt.sent.at(-1).cmd === 'seek' && yt.sent.at(-1).time === 0, 'prev after 3s restarts');
-  yt.onMessage.fire({ type: 'state', state: { videoId: 'ccc', title: 'Tccc', playing: true, currentTime: 1, lastPlayed: 7 } }); await tick();
-  await t.cmd('prev');
-  ok(yt.sent.some(m => m.cmd === 'load' && m.videoId === 'bbb') && t.lastQueue().current === 1, 'prev goes to bbb');
+  // Ended video = nothing playing: + plays right away in the existing tab
+  await ytState(yt, { videoId: 'zzz', playing: false, ended: true });
+  await t.q('add', { item: item('hhh') });
+  ok(nowId(t) === 'hhh' && upNext(t) === '' && loads(yt).endsWith('hhh') && t.browser._created.length === 1, 'after the end, + plays right away');
 
-  // media session action (Zen / media keys) -> next
-  yt.onMessage.fire({ type: 'action', action: 'next' }); await tick();
-  ok(t.lastQueue().current === 2, 'media key next follows queue');
-
-  // move & remove keep current pointing at the same item
-  await t.q('add', { item: item('ddd') });           // aaa,bbb,ccc*,ddd
-  await t.q('move', { from: 3, to: 0 });               // ddd,aaa,bbb,ccc*
-  ok(ids(t.lastQueue()) === 'ddd,aaa,bbb,ccc' && t.lastQueue().current === 3, 'move adjusts current');
-  await t.q('remove', { index: 0 });                   // aaa,bbb,ccc*
-  ok(ids(t.lastQueue()) === 'aaa,bbb,ccc' && t.lastQueue().current === 2, 'remove adjusts current');
-
-  // user picks a queued video themselves -> current follows
-  yt.onMessage.fire({ type: 'state', state: { videoId: 'aaa', title: 'Taaa', playing: true, currentTime: 1, lastPlayed: 8 } }); await tick();
-  ok(t.lastQueue().current === 0, 'current syncs to video playing in tab');
-
-  // persisted
-  ok(t.browser._local.queue && ids(t.browser._local.queue) === 'aaa,bbb,ccc', 'queue persisted to storage');
-
+  // No queue at all: next uses YouTube's own next
   await t.q('clear');
-  ok(t.lastQueue().items.length === 0 && t.lastQueue().current === -1, 'clear');
-  // empty queue -> next uses YouTube's own next
+  yt.onMessage.fire({ type: 'ended' }); await tick();
   await t.cmd('next');
   ok(yt.sent.at(-1).cmd === 'next', 'no queue -> YouTube next');
+
+  // Plain YouTube browsing outside a session doesn't create queue entries
+  const histBefore = t.lastQueue().historyCount;
+  await ytState(yt, { videoId: 'yt1' });
+  await ytState(yt, { videoId: 'yt2' });
+  ok(nowId(t) === null && t.lastQueue().historyCount === histBefore, 'browsing YouTube normally leaves the queue alone');
+  ok(t.browser._local.queue && Array.isArray(t.browser._local.queue.upNext), 'queue persisted in new shape');
 }
 {
-  // Add to an empty queue with nothing playing starts playback
+  // Migration from the old { items, current } shape
+  const t = await boot({ queue: { items: [item('a1'), item('a2'), item('a3'), item('a4')], current: 1 } });
+  ok(nowId(t) === 'a2' && upNext(t) === 'a3,a4' && t.lastQueue().historyCount === 1, 'old queue migrated: ' + JSON.stringify(t.lastQueue()).slice(0, 80));
+}
+{
+  // Floating player toggle (popup button / shortcut)
   const t = await boot();
-  await t.q('add', { item: item('zzz') });
-  ok(t.browser._created.length === 1 && t.lastQueue().current === 0, 'add to empty idle queue starts playing');
+  await t.cmd('toggleFloating'); await tick();
+  ok(t.browser._local.overlayClosed === true, 'toggleFloating hides');
+  t.browser.commands.onCommand.fire('toggle-floating-player'); await tick(); await tick();
+  ok(t.browser._local.overlayClosed === false, 'shortcut shows again');
 }
 {
   // Search routed through background

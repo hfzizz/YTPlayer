@@ -6,10 +6,12 @@ const ALL_SITES = { origins: ['<all_urls>'] };
 
 YTMini.mountPlayer(document.getElementById('root'), {
   panel: 'search',
-  footer: ['window', 'sidebar', 'settings'],
+  footer: ['floating', 'window', 'sidebar', 'settings'],
   keyboard: true,
   // Opening another view from the popup makes the popup redundant.
-  onFooterAction: () => window.close(),
+  onFooterAction: (action) => {
+    if (action !== 'floating') window.close();
+  },
 });
 
 // The floating card needs the optional "all websites" permission. Offer it here,

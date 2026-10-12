@@ -13,6 +13,7 @@
   const RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
   const TICK_MS = 250;
   const SEARCH_DEBOUNCE_MS = 450;
+  const UP_NEXT_HINT_S = 10;
 
   const ICONS = {
     play: 'M8 5v14l11-7z',
@@ -36,6 +37,7 @@
     window:
       'M19 11h-8v6h8v-6zm4 8V4.98C23 3.88 22.1 3 21 3H3c-1.1 0-2 .88-2 1.98V19c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2zm-2 .02H3V4.97h18v14.05z',
     sidebar: 'M3 4h18v16H3V4zm2 2v12h4V6H5zm6 0v12h8V6h-8z',
+    pip: 'M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 1.98 2 1.98h18c1.1 0 2-.88 2-1.98V5c0-1.1-.9-2-2-2zm0 16.01H3V4.98h18v14.03z',
     settings:
       'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z',
     expand: 'M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z',
@@ -123,7 +125,7 @@
     };
 
     let state = null;
-    let queue = { items: [], current: -1 };
+    let queue = { nowPlaying: null, upNext: [], historyCount: 0 };
     let receivedAt = 0;
     let seeking = false;
     let adjustingVolume = false;
@@ -136,6 +138,7 @@
     let lastQuery = '';
     let flashTimer = 0;
     let dragFrom = -1;
+    let showUpNextHint = true;
 
     // =============== Build DOM ===============
     const container = el(
@@ -198,7 +201,12 @@
     const nextBtn = iconButton('next', 'Next');
     controls.append(prevBtn, playBtn, nextBtn);
 
-    now.append(meta, blockedNote, progress, controls);
+    const upNextHint = el('div', 'ytm-upnext');
+    upNextHint.hidden = true;
+    const upNextHintTitle = el('span', 'ytm-upnext-title');
+    upNextHint.append(el('span', 'ytm-upnext-label', { textContent: 'Next' }), upNextHintTitle);
+
+    now.append(meta, blockedNote, progress, controls, upNextHint);
 
     const toolbar = el('div', 'ytm-toolbar');
     const muteBtn = iconButton('volume', 'Mute');
@@ -261,7 +269,7 @@
     const queueList = el('ol', 'ytm-list ytm-queue-list');
     const queueEmpty = el('div', 'ytm-status ytm-queue-empty');
     queueEmpty.append(
-      el('span', '', { textContent: 'Your queue is empty. ' }),
+      el('span', '', { textContent: 'Nothing queued. ' }),
       el('button', 'ytm-link', { type: 'button', textContent: 'Search for something to add' })
     );
     queueView.append(queueHeader, queueList, queueEmpty);
@@ -272,6 +280,7 @@
     const footer = el('div', 'ytm-footer');
     const footerButtons = {};
     const FOOTER_DEFS = {
+      floating: ['pip', 'Show / hide the floating player'],
       window: ['window', 'Open mini window'],
       sidebar: ['sidebar', 'Open in sidebar'],
       settings: ['settings', 'Settings'],
@@ -351,13 +360,13 @@
     }
 
     function upcomingCount() {
-      return Math.max(0, queue.items.length - queue.current - 1);
+      return queue.upNext.length;
     }
 
     function renderEmpty() {
       const upcoming = upcomingCount();
       startQueueBtn.hidden = !upcoming;
-      emptyText.textContent = upcoming ? `${upcoming} in your queue` : 'Nothing playing';
+      emptyText.textContent = upcoming ? `${upcoming} up next` : 'Nothing playing';
     }
 
     function render() {
@@ -396,7 +405,6 @@
       ccBtn.setAttribute('aria-pressed', String(!!state.captionsOn));
 
       // Highlight the queue row that's playing (it may change without a queue update).
-      queueRenderKey = '';
       renderQueue();
     }
 
@@ -415,7 +423,6 @@
       for (const b of [searchBtn, queueBtn]) b.setAttribute('aria-pressed', String(panel === b.dataset.panel));
       for (const t of [searchTab, queueTab]) t.setAttribute('aria-selected', String(panel === t.dataset.panel));
       if (panel === 'search') requestAnimationFrame(() => searchInput.focus());
-      if (panel === 'queue') scrollCurrentIntoView();
       if (o.onPanelChange) o.onPanelChange(panel);
     }
 
@@ -500,39 +507,31 @@
       queueCount.textContent = upcoming ? String(upcoming) : '';
       queueCount.hidden = !upcoming;
       queueTabCount.textContent = upcoming ? String(upcoming) : '';
+      renderUpNextHint();
 
-      const playingId = state && state.videoId;
-      const key = `${queue.current}|${playingId}|${queue.items.map((i) => i.uid).join(',')}`;
+      const key = queue.upNext.map((i) => i.uid).join(',');
       if (key === queueRenderKey) return;
       queueRenderKey = key;
 
-      const hasItems = queue.items.length > 0;
-      queueEmpty.hidden = hasItems;
-      queueHeader.hidden = !hasItems;
-      queueSummary.textContent = upcoming ? `${upcoming} up next` : 'End of queue';
-
-      queueList.replaceChildren(...queue.items.map((item, index) => queueRow(item, index, playingId)));
-      if (panel === 'queue') scrollCurrentIntoView();
+      queueEmpty.hidden = upcoming > 0;
+      queueHeader.hidden = upcoming === 0;
+      queueSummary.textContent = `Up next \u00b7 ${upcoming}`;
+      queueList.replaceChildren(...queue.upNext.map((item, index) => queueRow(item, index)));
     }
 
-    function queueRow(item, index, playingId) {
-      const isCurrent = index === queue.current;
-      const played = index < queue.current;
-      const li = el(
-        'li',
-        ['ytm-row', 'ytm-qrow', isCurrent && 'ytm-current', played && 'ytm-played'].filter(Boolean).join(' ')
-      );
+    function queueRow(item, index) {
+      const li = el('li', 'ytm-row ytm-qrow');
       li.draggable = true;
       li.dataset.index = String(index);
 
       const handle = el('span', 'ytm-handle', { title: 'Drag to reorder' });
-      handle.appendChild(icon(isCurrent && playingId === item.videoId ? 'play' : 'drag'));
+      handle.appendChild(icon('drag'));
 
-      const main = el('button', 'ytm-row-main', { type: 'button', title: `Play "${item.title}"` });
+      const main = el('button', 'ytm-row-main', { type: 'button', title: `Play "${item.title}" now` });
       const text = el('span', 'ytm-row-text');
       text.append(
         el('span', 'ytm-row-title', { textContent: item.title }),
-        el('span', 'ytm-row-sub', { textContent: [item.channel, item.duration].filter(Boolean).join(' · ') })
+        el('span', 'ytm-row-sub', { textContent: [item.channel, item.duration].filter(Boolean).join(' \u00b7 ') })
       );
       main.appendChild(text);
       main.addEventListener('click', () => queueOp('play', { index }));
@@ -546,9 +545,13 @@
       return li;
     }
 
-    function scrollCurrentIntoView() {
-      const cur = queueList.querySelector('.ytm-current');
-      if (cur) cur.scrollIntoView({ block: 'nearest' });
+    // "Next: <title>" on the card shortly before a queued song takes over.
+    function renderUpNextHint() {
+      const next = queue.upNext[0];
+      const remaining = state && state.duration ? state.duration - liveTime() : Infinity;
+      const show = !!(showUpNextHint && next && state && !state.ad && remaining <= UP_NEXT_HINT_S && remaining > 0);
+      upNextHint.hidden = !show;
+      if (show) upNextHintTitle.textContent = next.title;
     }
 
     // Drag to reorder
@@ -598,6 +601,8 @@
 
     // =============== Settings ===============
     function applySettings(s) {
+      showUpNextHint = s.upNextToast !== false;
+      if (footerButtons.floating) footerButtons.floating.hidden = !s.overlayEnabled;
       if (footerButtons.window) footerButtons.window.hidden = !s.windowEnabled;
       if (footerButtons.sidebar) footerButtons.sidebar.hidden = !s.sidebarEnabled || !browser.sidebarAction;
     }
@@ -686,6 +691,8 @@
         send('openWindow');
       } else if (action === 'settings') {
         send('openOptions');
+      } else if (action === 'floating') {
+        send('toggleFloating');
       }
       if (o.onFooterAction) o.onFooterAction(action);
     });
@@ -715,8 +722,28 @@
     if (o.keyboard) document.addEventListener('keydown', onKeyDown);
 
     const ticker = setInterval(() => {
-      if (state && state.playing) renderProgress();
+      if (state && state.playing) {
+        renderProgress();
+        renderUpNextHint();
+      }
     }, TICK_MS);
+
+    // Floating-player toggle shows whether the card is currently shown.
+    function syncFloatingButton(closed) {
+      const b = footerButtons.floating;
+      if (!b) return;
+      b.classList.add('ytm-toggle');
+      b.setAttribute('aria-pressed', String(!closed));
+      b.title = closed ? 'Show the floating player' : 'Hide the floating player';
+      b.setAttribute('aria-label', b.title);
+    }
+    const onLocalChange = (changes, area) => {
+      if (area === 'local' && changes.overlayClosed) syncFloatingButton(!!changes.overlayClosed.newValue);
+    };
+    if (footerButtons.floating) {
+      browser.storage.local.get('overlayClosed').then((r) => syncFloatingButton(!!r.overlayClosed));
+      browser.storage.onChanged.addListener(onLocalChange);
+    }
 
     const unsubscribe = YTMiniSettings.onChange(applySettings);
     YTMiniSettings.get().then(applySettings);
@@ -739,6 +766,7 @@
         destroyed = true;
         clearInterval(ticker);
         unsubscribe();
+        browser.storage.onChanged.removeListener(onLocalChange);
         if (o.keyboard) document.removeEventListener('keydown', onKeyDown);
         if (port) port.disconnect();
         container.remove();

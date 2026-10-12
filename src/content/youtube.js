@@ -12,11 +12,26 @@
   const TIME_THROTTLE_MS = 1000;
   const LOAD_VERIFY_MS = 3000;
   const BLOCKED_AFTER_MS = 4000;
+  const EARLY_ADVANCE_S = 0.35; // switch just before the end, so YouTube's end screen never shows
+  const ENSURE_PLAY_MS = 1500;
+  const FADE_STEPS_PER_S = 20;
+  const SILENCE_WINDOW_S = 20; // only look for trailing silence this close to the end
+  const SILENCE_RMS = 0.004;
+  const SILENCE_HOLD_MS = 1500;
+  const RESTORE_VOLUME_KEY = 'ytmini-restore-volume';
 
   let port = null;
   let lastPlayed = 0;
   let lastTimeSend = 0;
   let queueActive = false; // set by the background: our queue decides what plays next
+  let upNextAvailable = false; // a queued song follows the current one
+  let crossfadeSeconds = 0;
+  let skipSilence = false;
+  let advancedFor = null; // videoId we already reported as finished
+  let fade = null; // { timer, kind: 'out' | 'in' }
+  let expectedVolume = null; // the volume we last set while fading
+  let audio = null; // skip-silence analyser: object, or false when unavailable
+  let silentSince = 0;
   let wantPlaySince = 0; // when we asked for playback; used to detect autoplay blocking
   let blocked = false;
 
@@ -125,6 +140,7 @@
       url: location.href,
       ad,
       playing,
+      ended: !!v.ended,
       blocked,
       currentTime: Number.isFinite(currentTime) ? currentTime : 0,
       duration: Number.isFinite(duration) ? duration : 0,
@@ -207,6 +223,18 @@
     } else {
       location.assign(`/watch?v=${videoId}`);
     }
+    ensurePlaying(videoId);
+  }
+
+  // YouTube sometimes leaves the new video paused (e.g. after an end screen).
+  // Nudge it once or twice so the queue keeps flowing.
+  function ensurePlaying(videoId) {
+    for (const delay of [ENSURE_PLAY_MS, ENSURE_PLAY_MS * 2]) {
+      setTimeout(() => {
+        const v = video();
+        if (v && v.paused && currentVideoId() === videoId && !document.querySelector(S.adShowing)) play();
+      }, delay);
+    }
   }
 
   // At the end of a video YouTube counts down to an autoplay video. When our
@@ -285,6 +313,183 @@
     sendSoon();
   }
 
+  // ---------- Transitions between queued songs ----------
+
+  function getVolume() {
+    const v = Number(call('getVolume'));
+    if (Number.isFinite(v)) return v;
+    const el = video();
+    return el ? Math.round(el.volume * 100) : 100;
+  }
+
+  function setVolumeQuiet(vol) {
+    expectedVolume = Math.round(vol);
+    if (has('setVolume')) call('setVolume', expectedVolume);
+    else if (video()) video().volume = expectedVolume / 100;
+  }
+
+  function stopFade() {
+    if (fade) clearInterval(fade.timer);
+    fade = null;
+    expectedVolume = null;
+  }
+
+  // The volume to return to after a fade, and the video that was faded out.
+  // Kept in sessionStorage so it survives a full page load of the next video.
+  function savedFade() {
+    try {
+      const raw = sessionStorage.getItem(RESTORE_VOLUME_KEY);
+      if (!raw) return null;
+      const { volume, from } = JSON.parse(raw);
+      return Number.isFinite(volume) ? { volume, from } : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function savedRestoreVolume() {
+    const f = savedFade();
+    return f ? f.volume : null;
+  }
+
+  function setRestoreVolume(vol) {
+    try {
+      if (vol === null) sessionStorage.removeItem(RESTORE_VOLUME_KEY);
+      else sessionStorage.setItem(RESTORE_VOLUME_KEY, JSON.stringify({ volume: vol, from: currentVideoId() }));
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // Ramp the volume from its current level to `target` over `seconds`.
+  function rampVolume(kind, target, seconds, onDone) {
+    stopFade();
+    const from = getVolume();
+    const steps = Math.max(1, Math.round(seconds * FADE_STEPS_PER_S));
+    let i = 0;
+    fade = {
+      kind,
+      timer: setInterval(() => {
+        i++;
+        setVolumeQuiet(from + ((target - from) * i) / steps);
+        if (i >= steps) {
+          stopFade();
+          if (onDone) onDone();
+        }
+      }, 1000 / FADE_STEPS_PER_S),
+    };
+  }
+
+  // Tell the background this song is done (once per video), so it starts the next one.
+  function advance() {
+    const id = currentVideoId();
+    if (!id || advancedFor === id) return;
+    advancedFor = id;
+    silentSince = 0;
+    notify({ type: 'ended', videoId: id });
+  }
+
+  // Skip-silence: an analyser on the video's audio. Only hooked up while the
+  // audio context is running, so it can never silence playback.
+  function audioLevel() {
+    if (audio === false) return null;
+    const el = video();
+    if (!el) return null;
+    try {
+      if (!audio || audio.el !== el) {
+        const ctx = audio ? audio.ctx : new AudioContext();
+        if (ctx.state !== 'running') {
+          if (!audio) ctx.close();
+          audio = false;
+          return null;
+        }
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 2048;
+        const source = ctx.createMediaElementSource(el);
+        source.connect(analyser);
+        analyser.connect(ctx.destination);
+        audio = { ctx, analyser, el, buf: new Float32Array(analyser.fftSize) };
+      }
+      audio.analyser.getFloatTimeDomainData(audio.buf);
+      let sum = 0;
+      for (const x of audio.buf) sum += x * x;
+      return Math.sqrt(sum / audio.buf.length);
+    } catch (e) {
+      audio = false;
+      return null;
+    }
+  }
+
+  // Runs on every timeupdate of the main video.
+  function onProgress() {
+    const v = video();
+    if (!v || !queueActive || document.querySelector(S.adShowing)) return;
+    const id = currentVideoId();
+    const duration = Number(call('getDuration')) || v.duration;
+    const time = Number(call('getCurrentTime'));
+    const current = Number.isFinite(time) ? time : v.currentTime;
+    if (!(duration > 0)) return;
+    const remaining = duration - current;
+    if (advancedFor === id) {
+      // Replayed or seeked back after we switched: allow switching again.
+      if (remaining > Math.max(crossfadeSeconds, 1) + 2) advancedFor = null;
+      else return;
+    }
+
+    // Fade out into the next queued song.
+    if (upNextAvailable && crossfadeSeconds > 0 && !v.paused) {
+      if (remaining <= crossfadeSeconds && !(fade && fade.kind === 'out')) {
+        const saved = savedFade();
+        setRestoreVolume(saved && saved.from === id ? saved.volume : getVolume());
+        rampVolume('out', 0, Math.max(0.2, remaining - EARLY_ADVANCE_S));
+      } else if (fade && fade.kind === 'out' && remaining > crossfadeSeconds + 1) {
+        // The user seeked back: undo the fade.
+        stopFade();
+        const restore = savedRestoreVolume();
+        if (restore !== null) setVolumeQuiet(restore);
+        setRestoreVolume(null);
+        expectedVolume = null;
+      }
+    }
+
+    if (upNextAvailable && remaining <= EARLY_ADVANCE_S) {
+      advance();
+      return;
+    }
+
+    if (skipSilence && remaining <= SILENCE_WINDOW_S && remaining > EARLY_ADVANCE_S && !v.paused) {
+      const level = audioLevel();
+      if (level === null || level > SILENCE_RMS) {
+        silentSince = 0;
+      } else if (!silentSince) {
+        silentSince = Date.now();
+      } else if (Date.now() - silentSince >= SILENCE_HOLD_MS) {
+        advance();
+      }
+    }
+  }
+
+  // A new video started: fade back in to the volume from before the fade-out.
+  function onNewVideoPlaying() {
+    const saved = savedFade();
+    if (!saved || saved.from === currentVideoId()) return; // still the song we faded out
+    const restore = saved.volume;
+    if (fade && fade.kind === 'in') return;
+    setRestoreVolume(null);
+    stopFade();
+    setVolumeQuiet(0);
+    rampVolume('in', restore, Math.max(0.5, crossfadeSeconds / 2));
+  }
+
+  // The user moved the volume while we were fading: stop and keep their choice.
+  function onVolumeChange() {
+    if (!fade || expectedVolume === null) return;
+    if (Math.abs(getVolume() - expectedVolume) > 2) {
+      stopFade();
+      setRestoreVolume(null);
+    }
+  }
+
   // ---------- Media Session (Zen's media player, media keys, OS controls) ----------
 
   // YouTube sets its own next/previous handlers for every video. While our queue
@@ -313,6 +518,9 @@
       if (msg.type === 'cmd') exec(msg);
       else if (msg.type === 'config') {
         queueActive = !!msg.queueActive;
+        upNextAvailable = !!msg.upNextAvailable;
+        crossfadeSeconds = Math.max(0, Math.min(12, Number(msg.crossfadeSeconds) || 0));
+        skipSilence = !!msg.skipSilence;
         claimMediaSession();
       } else if (msg.type === 'requestState') send();
     });
@@ -334,6 +542,8 @@
       (e) => {
         if (!isMainVideo(e.target)) return;
         lastPlayed = Date.now();
+        if (e.type === 'playing' && advancedFor && advancedFor !== currentVideoId()) advancedFor = null;
+        if (e.type === 'playing' && !document.querySelector(S.adShowing)) onNewVideoPlaying();
         send();
         // Re-claim after YouTube re-registers its handlers for the new video.
         setTimeout(claimMediaSession, 500);
@@ -347,7 +557,14 @@
       if (!isMainVideo(e.target) || document.querySelector(S.adShowing)) return;
       send();
       if (queueActive) cancelAutoplay();
-      notify({ type: 'ended', videoId: currentVideoId() });
+      advance();
+    },
+    true
+  );
+  document.addEventListener(
+    'volumechange',
+    (e) => {
+      if (isMainVideo(e.target)) onVolumeChange();
     },
     true
   );
@@ -364,6 +581,7 @@
     'timeupdate',
     (e) => {
       if (!isMainVideo(e.target)) return;
+      onProgress();
       const now = Date.now();
       if (now - lastTimeSend < TIME_THROTTLE_MS) return;
       lastTimeSend = now;

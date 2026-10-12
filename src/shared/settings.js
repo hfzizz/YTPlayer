@@ -14,6 +14,9 @@
     badgeEnabled: true,
     pinPlayerTab: true, // pin the YouTube tab the extension opens for playback
     hideCardWithZenMod: true, // hide the floating card while the Zen mod's player is active
+    crossfadeSeconds: 4, // fade out / fade in between queued songs (0 = off)
+    skipSilence: false, // move on early when a song ends in silence (experimental)
+    upNextToast: true, // show "Next: …" on the player shortly before the switch
   };
 
   const api = {
