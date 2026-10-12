@@ -1,0 +1,155 @@
+body.ytm-options {
+  min-height: 100vh;
+}
+
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 32px 20px 48px;
+}
+
+h1 {
+  margin: 0 0 6px;
+  font-size: 24px;
+}
+
+h2 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ytm-text-2);
+}
+
+.lead {
+  margin: 0 0 24px;
+  color: var(--ytm-text-2);
+}
+
+section {
+  background: #181818;
+  border-radius: var(--ytm-radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--ytm-surface);
+  cursor: pointer;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.row small {
+  color: var(--ytm-text-2);
+  font-size: 13px;
+}
+
+.row small.warn {
+  color: #ffb300;
+}
+
+.row small.warn .ytm-pill {
+  margin-left: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+input[type='checkbox'] {
+  -moz-appearance: none;
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  border-radius: 10px;
+  background: var(--ytm-surface-hover);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--ytm-text);
+  transition: transform 0.15s;
+}
+
+input[type='checkbox']:checked {
+  background: var(--ytm-accent);
+}
+
+input[type='checkbox']:checked::after {
+  transform: translateX(16px);
+}
+
+input[type='checkbox']:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--ytm-text);
+  outline-offset: 2px;
+}
+
+select {
+  font: inherit;
+  color: var(--ytm-text);
+  background: var(--ytm-surface);
+  border: 1px solid var(--ytm-surface-hover);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.shortcuts {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+
+.shortcuts li {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--ytm-surface);
+}
+
+.hint {
+  color: var(--ytm-text-2);
+  font-size: 13px;
+}
+
+kbd,
+code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: var(--ytm-surface);
+  border: 1px solid var(--ytm-surface-hover);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.saved {
+  min-height: 1.4em;
+  color: var(--ytm-text-2);
+  text-align: center;
+}
