@@ -59,6 +59,14 @@
 
       <section>
         <h2>Floating player</h2>
+        <div class="row">
+          <span>
+            <strong>Show / hide now</strong>
+            <small>Closing it with ✕ hides it in every tab until you show it again here, from the toolbar popup, or with
+              <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>.</small>
+          </span>
+          <button type="button" class="ytm-pill" id="toggle-floating">Show</button>
+        </div>
         <label class="row">
           <span><strong>Start position</strong><small>Where the floating player first appears. Changing this resets a dragged position.</small></span>
           <select data-setting="overlayCorner">
@@ -85,6 +93,31 @@
             </small>
           </span>
           <input type="checkbox" data-setting="pinPlayerTab" />
+        </label>
+      </section>
+
+      <section>
+        <h2>Queue transitions</h2>
+        <label class="row">
+          <span>
+            <strong>Fade between songs <output id="crossfade-value"></output></strong>
+            <small>The current song fades out over its last seconds and the next queued one fades in. 0 turns it off.</small>
+          </span>
+          <input type="range" min="0" max="12" step="1" data-setting="crossfadeSeconds" id="crossfade" />
+        </label>
+        <label class="row">
+          <span>
+            <strong>Show "Next" before a song ends</strong>
+            <small>A small "Next: …" line on the player in the last 10 seconds.</small>
+          </span>
+          <input type="checkbox" data-setting="upNextToast" />
+        </label>
+        <label class="row">
+          <span>
+            <strong>Skip silence at the end (experimental)</strong>
+            <small>Moves on early when a queued song ends in a few seconds of silence. Quiet endings can occasionally be cut short.</small>
+          </span>
+          <input type="checkbox" data-setting="skipSilence" />
         </label>
       </section>
 

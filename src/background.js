@@ -15,7 +15,7 @@ const OVERLAY_FILES = ['src/shared/settings.js', 'src/shared/player-ui.js', 'src
 const PAGE_MATCHES = ['http://*/*', 'https://*/*'];
 const YOUTUBE_MATCHES = ['*://*.youtube.com/*'];
 const DEFAULT_WINDOW = { width: 380, height: 640 };
-const HISTORY_KEEP = 50; // played items kept above the current one
+const HISTORY_KEEP = 50; // finished songs kept (hidden) so "previous" can go back
 const RETURN_FOCUS_TIMEOUT_MS = 8000;
 
 const ytTabs = new Map(); // tabId -> { port, state, connectedAt }
@@ -24,7 +24,7 @@ const uiPorts = new Set();
 // connected, the mod is installed and active.
 const zenPorts = new Set();
 let settings = { ...YTMiniSettings.DEFAULTS };
-let queue = { items: [], current: -1 };
+let queue = { nowPlaying: null, upNext: [], history: [] };
 let lastBadge = '';
 let nextUid = Date.now();
 // When we open a player tab we briefly show it (Firefox won't start media in a
@@ -80,8 +80,8 @@ function broadcastState() {
 }
 
 function broadcastQueue() {
-  postAll(uiPorts, { type: 'queue', queue });
-  const config = { type: 'config', queueActive: queueActive() };
+  postAll(uiPorts, { type: 'queue', queue: publicQueue() });
+  const config = configMessage();
   for (const entry of ytTabs.values()) {
     try {
       entry.port.postMessage(config);
@@ -89,6 +89,16 @@ function broadcastQueue() {
       // tab is going away
     }
   }
+}
+
+function configMessage() {
+  return {
+    type: 'config',
+    queueActive: queueActive(),
+    upNextAvailable: queue.upNext.length > 0,
+    crossfadeSeconds: Number(settings.crossfadeSeconds) || 0,
+    skipSilence: !!settings.skipSilence,
+  };
 }
 
 function envMessage() {
@@ -111,25 +121,51 @@ function sendToActive(msg) {
 }
 
 // ---------- Queue ----------
+//
+// Model: the song playing now, the songs coming up next, and a hidden history so
+// "previous" can go back. Finished songs leave Up Next (they go to history).
 
 const queueReady = browser.storage.local.get('queue').then(({ queue: saved }) => {
-  if (saved && Array.isArray(saved.items)) {
-    queue = { items: saved.items, current: Math.min(saved.current ?? -1, saved.items.length - 1) };
-  }
+  queue = migrateQueue(saved);
 });
 
-// The queue "drives" playback when there's something in it the user hasn't finished.
+// Accepts the stored queue in either the current shape or the old
+// { items, current } shape from earlier versions.
+function migrateQueue(saved) {
+  const empty = { nowPlaying: null, upNext: [], history: [] };
+  if (!saved || typeof saved !== 'object') return empty;
+  if (Array.isArray(saved.upNext)) {
+    return {
+      nowPlaying: saved.nowPlaying || null,
+      upNext: saved.upNext,
+      history: Array.isArray(saved.history) ? saved.history : [],
+    };
+  }
+  if (Array.isArray(saved.items)) {
+    const cur = Number.isInteger(saved.current) ? saved.current : -1;
+    return {
+      nowPlaying: saved.items[cur] || null,
+      upNext: saved.items.slice(cur + 1),
+      history: cur > 0 ? saved.items.slice(0, cur) : [],
+    };
+  }
+  return empty;
+}
+
+// What the UIs get (history stays hidden; only its size, for the ⏮ button).
+function publicQueue() {
+  return { nowPlaying: queue.nowPlaying, upNext: queue.upNext, historyCount: queue.history.length };
+}
+
+// The queue "drives" playback (media keys, end-of-song handling) while a queue
+// session is going: a queued song is playing or more are waiting. Outside of
+// that, YouTube behaves normally (its own autoplay, next/previous).
 function queueActive() {
-  return queue.items.length > 0 && queue.current < queue.items.length;
+  return queue.upNext.length > 0 || queue.nowPlaying !== null;
 }
 
 function saveQueue() {
-  // Trim old history so the stored queue doesn't grow forever.
-  if (queue.current > HISTORY_KEEP) {
-    const drop = queue.current - HISTORY_KEEP;
-    queue.items.splice(0, drop);
-    queue.current -= drop;
-  }
+  if (queue.history.length > HISTORY_KEEP) queue.history.splice(0, queue.history.length - HISTORY_KEEP);
   browser.storage.local.set({ queue });
   broadcastQueue();
 }
@@ -144,10 +180,21 @@ function makeItem(src) {
   };
 }
 
-function playIndex(index) {
-  const item = queue.items[index];
-  if (!item) return;
-  queue.current = index;
+// "Nothing playing": no YouTube player, or its video has finished.
+// A paused song still counts as playing.
+function nothingPlaying() {
+  const state = currentState();
+  return !state || !state.videoId || !!state.ended;
+}
+
+function pushHistory(item) {
+  if (item) queue.history.push(item);
+}
+
+// Make `item` the song playing now and load it in the player tab.
+function playItem(item, { keepCurrent = true } = {}) {
+  if (keepCurrent) pushHistory(queue.nowPlaying);
+  queue.nowPlaying = item;
   saveQueue();
   loadVideo(item.videoId);
 }
@@ -186,81 +233,95 @@ function finishReturn() {
 }
 
 function next() {
-  if (queue.current + 1 < queue.items.length) playIndex(queue.current + 1);
-  else if (!queue.items.length) sendToActive({ type: 'cmd', cmd: 'next' }); // no queue: YouTube's own next
-  // else: end of the queue -> do nothing (stop)
+  if (queue.upNext.length) playItem(queue.upNext.shift());
+  else if (!queueActive()) sendToActive({ type: 'cmd', cmd: 'next' }); // no queue: YouTube's own next
+  // else: end of the queue -> stop
 }
 
 function prev() {
   const state = currentState();
   if (state && state.currentTime > 3) sendToActive({ type: 'cmd', cmd: 'seek', time: 0 });
-  else if (queue.current > 0) playIndex(queue.current - 1);
-  else if (!queue.items.length) sendToActive({ type: 'cmd', cmd: 'prev' });
+  else if (queue.history.length) {
+    if (queue.nowPlaying) queue.upNext.unshift(queue.nowPlaying);
+    playItem(queue.history.pop(), { keepCurrent: false });
+  } else if (!queueActive()) sendToActive({ type: 'cmd', cmd: 'prev' });
   else sendToActive({ type: 'cmd', cmd: 'seek', time: 0 });
 }
 
+// The song in the player tab finished: it leaves the list (into history) and the
+// next one starts, or playback stops when Up Next is empty.
 function onEnded() {
-  if (queue.current + 1 < queue.items.length) playIndex(queue.current + 1);
-  else if (queue.items.length) sendToActive({ type: 'cmd', cmd: 'stopAutoplay' });
-}
-
-// Keep `current` in sync if the user picks a video some other way (e.g. in the tab).
-function syncCurrentWithVideo(videoId) {
-  if (!videoId) return;
-  const cur = queue.items[queue.current];
-  if (cur && cur.videoId === videoId) return;
-  const idx = queue.items.findIndex((it, i) => it.videoId === videoId && i >= queue.current);
-  const found = idx >= 0 ? idx : queue.items.findIndex((it) => it.videoId === videoId);
-  if (found >= 0) {
-    queue.current = found;
+  if (queue.upNext.length) {
+    playItem(queue.upNext.shift());
+  } else if (queueActive()) {
+    pushHistory(queue.nowPlaying);
+    queue.nowPlaying = null;
     saveQueue();
+    sendToActive({ type: 'cmd', cmd: 'stopAutoplay' });
   }
 }
 
+// Keep "now playing" in sync if the user picks a video some other way (e.g. in the tab).
+function syncNowPlaying(state) {
+  if (!state || !state.videoId || state.ad || !queueActive()) return;
+  const cur = queue.nowPlaying;
+  if (cur && cur.videoId === state.videoId) return;
+  // Someone else's video took over; it's now the song playing (Up Next stays as is).
+  const idx = queue.upNext.findIndex((it) => it.videoId === state.videoId);
+  const item = idx >= 0 ? queue.upNext.splice(idx, 1)[0] : makeItem({ ...state, duration: '' });
+  pushHistory(cur);
+  queue.nowPlaying = item;
+  saveQueue();
+}
+
 function handleQueueOp(msg) {
-  const { items } = queue;
+  const { upNext } = queue;
   switch (msg.op) {
     case 'add':
-      items.push(makeItem(msg.item));
-      // Nothing playing and nothing queued before -> start right away.
-      if (!currentState() && items.length === 1) return playIndex(0);
+      if (nothingPlaying()) return playItem(makeItem(msg.item));
+      upNext.push(makeItem(msg.item));
       break;
     case 'playNext':
-      items.splice(queue.current + 1, 0, makeItem(msg.item));
-      if (!currentState() && items.length === 1) return playIndex(0);
+      if (nothingPlaying()) return playItem(makeItem(msg.item));
+      upNext.unshift(makeItem(msg.item));
       break;
     case 'playNow':
-      items.splice(queue.current + 1, 0, makeItem(msg.item));
-      return playIndex(queue.current + 1);
-    case 'play':
-      return playIndex(msg.index);
+      return playItem(makeItem(msg.item));
+    case 'play': {
+      const i = msg.index;
+      if (!(i >= 0 && i < upNext.length)) return;
+      return playItem(upNext.splice(i, 1)[0]);
+    }
     case 'remove': {
       const i = msg.index;
-      if (i < 0 || i >= items.length) return;
-      items.splice(i, 1);
-      if (i <= queue.current) queue.current--;
+      if (!(i >= 0 && i < upNext.length)) return;
+      upNext.splice(i, 1);
       break;
     }
     case 'move': {
       const { from, to } = msg;
-      if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return;
-      const [moved] = items.splice(from, 1);
-      items.splice(to, 0, moved);
-      if (queue.current === from) queue.current = to;
-      else if (from < queue.current && to >= queue.current) queue.current--;
-      else if (from > queue.current && to <= queue.current) queue.current++;
+      if (from === to || !(from >= 0 && from < upNext.length) || !(to >= 0 && to < upNext.length)) return;
+      const [moved] = upNext.splice(from, 1);
+      upNext.splice(to, 0, moved);
       break;
     }
     case 'clear':
-      queue = { items: [], current: -1 };
-      break;
-    case 'clearUpcoming':
-      items.splice(queue.current + 1);
+      upNext.length = 0;
       break;
     default:
       return;
   }
   saveQueue();
+}
+
+// ---------- Floating player visibility ----------
+
+// Closing the floating player hides it in every tab until the user reopens it
+// (popup button, shortcut or settings page).
+async function toggleFloating(show) {
+  const { overlayClosed } = await browser.storage.local.get('overlayClosed');
+  const closed = typeof show === 'boolean' ? !show : !overlayClosed;
+  await browser.storage.local.set({ overlayClosed: closed });
 }
 
 // ---------- Search ----------
@@ -367,6 +428,7 @@ function applySettings() {
   applyAction();
   syncOverlay();
   updateBadge(currentState(), true);
+  queueReady.then(broadcastQueue); // crossfade / skip-silence settings go to the player tab
 }
 
 // ---------- Connections ----------
@@ -393,8 +455,11 @@ function handleUiCommand(msg) {
       break;
     case 'togglePlay':
       // Nothing loaded yet but there's a queue: start it.
-      if (!currentState() && queue.items.length) playIndex(Math.max(0, queue.current));
+      if (nothingPlaying() && queue.upNext.length) playItem(queue.upNext.shift());
       else sendToActive(msg);
+      break;
+    case 'toggleFloating':
+      toggleFloating(msg.show);
       break;
     default:
       sendToActive(msg);
@@ -411,7 +476,7 @@ browser.runtime.onConnect.addListener(async (port) => {
       if (!entry || entry.port !== port) return;
       if (msg.type === 'state') {
         entry.state = msg.state;
-        if (msg.state && activeEntry()?.tabId === tabId) syncCurrentWithVideo(msg.state.videoId);
+        if (msg.state && activeEntry()?.tabId === tabId) syncNowPlaying(msg.state);
         if (pendingReturn && pendingReturn.tabId === tabId && msg.state && msg.state.playing) finishReturn();
         broadcastState();
       } else if (msg.type === 'ended') {
@@ -430,7 +495,7 @@ browser.runtime.onConnect.addListener(async (port) => {
       }
     });
     await queueReady;
-    port.postMessage({ type: 'config', queueActive: queueActive() });
+    port.postMessage(configMessage());
   } else if (port.name === 'ui') {
     uiPorts.add(port);
     port.onMessage.addListener(async (msg) => {
@@ -454,7 +519,7 @@ browser.runtime.onConnect.addListener(async (port) => {
     port.postMessage({ type: 'state', state: currentState() });
     port.postMessage(envMessage());
     await queueReady;
-    port.postMessage({ type: 'queue', queue });
+    port.postMessage({ type: 'queue', queue: publicQueue() });
   }
 });
 
@@ -479,6 +544,9 @@ browser.commands.onCommand.addListener(async (command) => {
       break;
     case 'open-mini-window':
       openMiniWindow();
+      break;
+    case 'toggle-floating-player':
+      toggleFloating();
       break;
   }
 });

@@ -15,6 +15,7 @@ function render(settings) {
     if (field.type === 'checkbox') field.checked = !!value;
     else field.value = value;
   }
+  renderCrossfade();
   updatePermissionNote();
 }
 
@@ -31,7 +32,7 @@ function flashSaved() {
 
 async function save(field) {
   const key = field.dataset.setting;
-  const value = field.type === 'checkbox' ? field.checked : field.value;
+  const value = field.type === 'checkbox' ? field.checked : field.type === 'range' ? Number(field.value) : field.value;
   await YTMiniSettings.set({ [key]: value });
   if (key === 'overlayCorner') await browser.storage.local.remove('overlayPos');
   flashSaved();
@@ -92,3 +93,26 @@ renderShortcuts();
   });
   port.onDisconnect.addListener(() => setTimeout(watchZenMod, 1000));
 })();
+
+// Fade length label next to the slider.
+const crossfade = document.getElementById('crossfade');
+function renderCrossfade() {
+  const n = Number(crossfade.value);
+  document.getElementById('crossfade-value').textContent = n ? `(${n}s)` : '(off)';
+}
+crossfade.addEventListener('input', renderCrossfade);
+
+// Show / hide the floating player in every tab.
+const toggleFloatingBtn = document.getElementById('toggle-floating');
+async function renderFloatingButton() {
+  const { overlayClosed } = await browser.storage.local.get('overlayClosed');
+  toggleFloatingBtn.textContent = overlayClosed ? 'Show' : 'Hide';
+}
+toggleFloatingBtn.addEventListener('click', async () => {
+  const { overlayClosed } = await browser.storage.local.get('overlayClosed');
+  await browser.storage.local.set({ overlayClosed: !overlayClosed });
+});
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.overlayClosed) renderFloatingButton();
+});
+renderFloatingButton();

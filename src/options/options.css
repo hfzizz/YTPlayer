@@ -157,3 +157,14 @@ code {
 .hint a {
   color: var(--ytm-text);
 }
+
+.row input[type='range'] {
+  flex: none;
+  width: 150px;
+  accent-color: var(--ytm-accent);
+}
+
+.row output {
+  color: var(--ytm-text-2);
+  font-weight: 400;
+}
