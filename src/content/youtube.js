@@ -1,5 +1,7 @@
 'use strict';
 
+/* global cloneInto */
+
 // Runs inside youtube.com tabs. Reads the player's state, reports it to the
 // background, and carries out commands sent from the mini player UIs.
 (() => {
@@ -8,16 +10,15 @@
 
   const S = globalThis.YTMiniSelectors;
   const TIME_THROTTLE_MS = 1000;
-  const QUEUE_REFRESH_MS = 4000;
-  const UPNEXT_LIMIT = 25;
-  const PLAYLIST_LIMIT = 200;
+  const LOAD_VERIFY_MS = 3000;
+  const BLOCKED_AFTER_MS = 4000;
 
   let port = null;
   let lastPlayed = 0;
   let lastTimeSend = 0;
-  let queueCache = null;
-  let queueKey = '';
-  let queueAt = 0;
+  let queueActive = false; // set by the background: our queue decides what plays next
+  let wantPlaySince = 0; // when we asked for playback; used to detect autoplay blocking
+  let blocked = false;
 
   // ---------- DOM helpers ----------
 
@@ -71,62 +72,17 @@
     return new URLSearchParams(location.search).get(name);
   }
 
-  function videoIdFromHref(href) {
-    if (!href) return null;
+  function currentVideoId() {
     try {
-      return new URL(href, location.origin).searchParams.get('v');
+      const d = call('getVideoData');
+      if (d && d.video_id) return d.video_id;
     } catch (e) {
-      return null;
+      // ignore
     }
+    return urlParam('v');
   }
 
   // ---------- State ----------
-
-  function collectQueue(videoId) {
-    const listId = urlParam('list');
-    if (listId) {
-      const panels = [...document.querySelectorAll(S.playlistPanel)];
-      const panel = panels.find((p) => p.querySelector(S.playlistItem));
-      if (panel) {
-        const items = [...panel.querySelectorAll(S.playlistItem)].slice(0, PLAYLIST_LIMIT).map((el, index) => {
-          const link = el.querySelector(S.playlistItemLink);
-          return {
-            index,
-            title: textOf(S.playlistItemTitle, el),
-            channel: textOf(S.playlistItemChannel, el),
-            videoId: videoIdFromHref(link && link.getAttribute('href')),
-            current: el.hasAttribute('selected'),
-          };
-        });
-        return { type: 'playlist', title: textOf(S.playlistTitle, panel), items };
-      }
-    }
-
-    const container = document.querySelector(S.upNextContainer);
-    if (!container) return null;
-    const items = [];
-    for (const el of container.querySelectorAll(S.upNextItem)) {
-      const link = el.querySelector(S.upNextLink);
-      const id = videoIdFromHref(link && link.getAttribute('href'));
-      if (!id || id === videoId) continue;
-      const title = textOf(S.upNextTitle, el);
-      if (!title) continue;
-      items.push({ index: items.length, title, channel: textOf(S.upNextChannel, el), videoId: id, current: false });
-      if (items.length >= UPNEXT_LIMIT) break;
-    }
-    return items.length ? { type: 'upnext', title: 'Up next', items } : null;
-  }
-
-  function getQueue(videoId) {
-    const key = `${location.href}|${videoId}`;
-    const now = Date.now();
-    if (key !== queueKey || now - queueAt > QUEUE_REFRESH_MS) {
-      queueCache = collectQueue(videoId);
-      queueKey = key;
-      queueAt = now;
-    }
-    return queueCache;
-  }
 
   function collectState() {
     const v = video();
@@ -154,6 +110,13 @@
     const apiMuted = call('isMuted');
 
     const ccBtn = document.querySelector(S.captionsButton);
+    const playing = !v.paused && !v.ended;
+    if (playing) {
+      blocked = false;
+      wantPlaySince = 0;
+    } else if (wantPlaySince && Date.now() - wantPlaySince > BLOCKED_AFTER_MS) {
+      blocked = true;
+    }
 
     return {
       videoId,
@@ -161,7 +124,8 @@
       channel: cleanText(data.author) || textOf(S.channel),
       url: location.href,
       ad,
-      playing: !v.paused && !v.ended,
+      playing,
+      blocked,
       currentTime: Number.isFinite(currentTime) ? currentTime : 0,
       duration: Number.isFinite(duration) ? duration : 0,
       volume: Number.isFinite(apiVolume) ? apiVolume : Math.round(v.volume * 100),
@@ -169,9 +133,7 @@
       rate: v.playbackRate || 1,
       captionsAvailable: isVisible(ccBtn),
       captionsOn: !!ccBtn && ccBtn.getAttribute('aria-pressed') === 'true',
-      isPlaylist: !!urlParam('list'),
       lastPlayed,
-      queue: getQueue(videoId),
     };
   }
 
@@ -186,14 +148,26 @@
 
   const sendSoon = (ms = 150) => setTimeout(send, ms);
 
+  function notify(msg) {
+    if (!port) return;
+    try {
+      port.postMessage(msg);
+    } catch (e) {
+      port = null;
+    }
+  }
+
   // ---------- Commands ----------
 
   function play() {
+    wantPlaySince = Date.now();
     if (has('playVideo')) call('playVideo');
     else video()?.play();
   }
 
   function pause() {
+    wantPlaySince = 0;
+    blocked = false;
     if (has('pauseVideo')) call('pauseVideo');
     else video()?.pause();
   }
@@ -209,26 +183,41 @@
     return !!el;
   }
 
-  function playQueueItem({ index, videoId }) {
-    queueKey = ''; // force refresh
-    const scope = urlParam('list')
-      ? [...document.querySelectorAll(S.playlistPanel)].find((p) => p.querySelector(S.playlistItem))
-      : document.querySelector(S.upNextContainer);
+  // Switch to another video without reloading the page (keeps playback allowed
+  // in this tab). Uses YouTube's own in-app navigation; if that doesn't take
+  // effect, falls back to a normal page load.
+  function loadVideo(videoId) {
+    if (!/^[\w-]{6,20}$/.test(videoId)) return;
+    wantPlaySince = Date.now();
+    const app = document.querySelector('ytd-app');
+    if (app) {
+      const detail = {
+        endpoint: {
+          commandMetadata: {
+            webCommandMetadata: { url: `/watch?v=${videoId}`, webPageType: 'WEB_PAGE_TYPE_WATCH', rootVe: 3832 },
+          },
+          watchEndpoint: { videoId },
+        },
+      };
+      const pageDetail = typeof cloneInto === 'function' ? cloneInto(detail, window) : detail;
+      app.dispatchEvent(new CustomEvent('yt-navigate', { bubbles: true, composed: true, detail: pageDetail }));
+      setTimeout(() => {
+        if (currentVideoId() !== videoId) location.assign(`/watch?v=${videoId}`);
+      }, LOAD_VERIFY_MS);
+    } else {
+      location.assign(`/watch?v=${videoId}`);
+    }
+  }
 
-    if (videoId && scope) {
-      const link = [...scope.querySelectorAll('a[href*="/watch"]')].find(
-        (a) => videoIdFromHref(a.getAttribute('href')) === videoId
-      );
-      if (link) {
-        link.click();
-        return;
-      }
-    }
-    if (urlParam('list') && has('playVideoAt') && Number.isInteger(index)) {
-      call('playVideoAt', index);
-      return;
-    }
-    if (videoId) location.assign(`/watch?v=${encodeURIComponent(videoId)}`);
+  // At the end of a video YouTube counts down to an autoplay video. When our
+  // queue is in charge, cancel that so we can load the next queued item (or stop).
+  function cancelAutoplay() {
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries++;
+      clickEl(S.autonavCancel);
+      if (tries >= 10) clearInterval(timer);
+    }, 150);
   }
 
   function exec(msg) {
@@ -251,7 +240,7 @@
       case 'prev':
         if (v && v.currentTime > 3) seek(0);
         else if (urlParam('list') && has('previousVideo')) call('previousVideo');
-        else if (!clickEl(`${S.prevButton}:not([style*="display: none"])`)) history.back();
+        else history.back();
         break;
       case 'seek':
         if (Number.isFinite(msg.time)) seek(msg.time);
@@ -284,13 +273,31 @@
       case 'toggleCaptions':
         clickEl(S.captionsButton);
         break;
-      case 'playQueueItem':
-        playQueueItem(msg);
+      case 'load':
+        loadVideo(msg.videoId);
+        break;
+      case 'stopAutoplay':
+        cancelAutoplay();
         break;
       default:
         return;
     }
     sendSoon();
+  }
+
+  // ---------- Media Session (Zen's media player, media keys, OS controls) ----------
+
+  // YouTube sets its own next/previous handlers for every video. While our queue
+  // is active we take them over so those buttons follow the queue instead.
+  function claimMediaSession() {
+    const ms = navigator.mediaSession;
+    if (!ms || !queueActive) return;
+    try {
+      ms.setActionHandler('nexttrack', () => notify({ type: 'action', action: 'next' }));
+      ms.setActionHandler('previoustrack', () => notify({ type: 'action', action: 'prev' }));
+    } catch (e) {
+      // Not supported; media keys keep YouTube's behaviour.
+    }
   }
 
   // ---------- Wiring ----------
@@ -304,7 +311,10 @@
     }
     port.onMessage.addListener((msg) => {
       if (msg.type === 'cmd') exec(msg);
-      else if (msg.type === 'requestState') send();
+      else if (msg.type === 'config') {
+        queueActive = !!msg.queueActive;
+        claimMediaSession();
+      } else if (msg.type === 'requestState') send();
     });
     port.onDisconnect.addListener(() => {
       port = null;
@@ -325,11 +335,23 @@
         if (!isMainVideo(e.target)) return;
         lastPlayed = Date.now();
         send();
+        // Re-claim after YouTube re-registers its handlers for the new video.
+        setTimeout(claimMediaSession, 500);
       },
       true
     );
   }
-  for (const type of ['pause', 'ended', 'seeked', 'durationchange', 'loadedmetadata', 'volumechange', 'ratechange']) {
+  document.addEventListener(
+    'ended',
+    (e) => {
+      if (!isMainVideo(e.target) || document.querySelector(S.adShowing)) return;
+      send();
+      if (queueActive) cancelAutoplay();
+      notify({ type: 'ended', videoId: currentVideoId() });
+    },
+    true
+  );
+  for (const type of ['pause', 'seeked', 'durationchange', 'loadedmetadata', 'volumechange', 'ratechange']) {
     document.addEventListener(
       type,
       (e) => {
@@ -350,16 +372,19 @@
     true
   );
 
-  // YouTube is a single-page app; metadata and queue update after navigation.
+  // YouTube is a single-page app; metadata updates after navigation.
   document.addEventListener('yt-navigate-finish', () => {
-    queueKey = '';
     sendSoon(500);
     sendSoon(2000);
+    setTimeout(claimMediaSession, 1000);
   });
 
-  // Periodic refresh picks up caption-button and queue changes that fire no media events.
+  // Periodic refresh picks up caption-button changes (no media event) and
+  // re-asserts the media session handlers.
   setInterval(() => {
-    if (video()) send();
+    if (!video()) return;
+    send();
+    claimMediaSession();
   }, 5000);
 
   const v = video();

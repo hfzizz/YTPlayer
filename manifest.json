@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YT Mini Player",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A mini player for regular YouTube: control the playing YouTube tab from a popup, sidebar, detached window or floating overlay.",
   "browser_specific_settings": {
     "gecko": {
@@ -21,7 +21,7 @@
   "host_permissions": ["*://*.youtube.com/*"],
   "optional_host_permissions": ["<all_urls>"],
   "background": {
-    "scripts": ["src/shared/settings.js", "src/background.js"]
+    "scripts": ["src/shared/settings.js", "src/search.js", "src/background.js"]
   },
   "action": {
     "default_title": "YT Mini Player",

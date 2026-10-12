@@ -2,15 +2,17 @@
 
 /* global YTMiniSettings */
 
-// The mini player UI. Used by the popup, sidebar, detached window and the
-// in-page overlay (inside a Shadow DOM). It builds its DOM without innerHTML,
-// so it works on pages that enforce Trusted Types.
+// The mini player UI: a music-player card plus a Search / Queue panel.
+// Used by the popup, sidebar, detached window and the in-page floating card
+// (inside a Shadow DOM). Builds its DOM without innerHTML so it also works on
+// pages that enforce Trusted Types.
 (() => {
   if (globalThis.YTMini && globalThis.YTMini.mountPlayer) return;
 
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
   const TICK_MS = 250;
+  const SEARCH_DEBOUNCE_MS = 450;
 
   const ICONS = {
     play: 'M8 5v14l11-7z',
@@ -23,6 +25,12 @@
       'M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z',
     cc: 'M19 4H5c-1.11 0-2 .9-2 2v12c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z',
     queue: 'M3 10h11v2H3zm0-4h11v2H3zm0 8h7v2H3zm13-1v8l6-4z',
+    search:
+      'M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z',
+    add: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z',
+    playNext: 'M3 10h11v2H3zm0-4h11v2H3zm0 8h7v2H3zm13-1v-3h-2v3h-3v2h3v3h2v-3h3v-2z',
+    drag: 'M9 4a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM9 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM9 16a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm6 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4z',
+    note: 'M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z',
     openTab:
       'M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z',
     window:
@@ -75,38 +83,85 @@
     return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
   }
 
+  // Fill level for Chromium-style range tracks (Firefox uses ::-moz-range-progress).
+  function paintRange(range) {
+    const max = Number(range.max) || 0;
+    const pct = max ? (Number(range.value) / max) * 100 : 0;
+    range.style.setProperty('--ytm-pct', `${pct}%`);
+  }
+
+  function isTextInput(node) {
+    return !!node && (node.tagName === 'TEXTAREA' || (node.tagName === 'INPUT' && /^(text|search)$/.test(node.type)));
+  }
+
   /**
    * Mount a mini player into `root`.
-   * opts.compact     smaller layout (overlay)
-   * opts.footer      array of footer buttons: 'window' | 'sidebar' | 'settings'
-   * opts.keyboard    enable keyboard shortcuts on the document (extension pages only)
-   * opts.queueOpen   start with the queue expanded
-   * opts.onState     callback(state|null) on every state update
+   * opts.compact        smaller card (floating overlay)
+   * opts.panelPosition  'below' (popup/window) or 'above' (overlay/sidebar) the card
+   * opts.panelAlwaysOpen  panel is always shown (sidebar/window); otherwise toggled from the card
+   * opts.panel          initially open panel: 'search' | 'queue' | null
+   * opts.footer         footer buttons: 'window' | 'sidebar' | 'settings'
+   * opts.keyboard       keyboard shortcuts on the document (extension pages only)
+   * opts.onState        callback(state|null) on every state update
+   * opts.onPanelChange  callback(panel|null) when the panel opens/closes/switches
+   * opts.onFooterAction callback(action) after a footer button is used
    */
   function mountPlayer(root, opts = {}) {
-    const o = { compact: false, footer: [], keyboard: false, queueOpen: false, onState: null, ...opts };
+    const o = {
+      compact: false,
+      panelPosition: 'below',
+      panelAlwaysOpen: false,
+      panel: null,
+      footer: [],
+      keyboard: false,
+      ...opts,
+    };
 
     let state = null;
+    let queue = { items: [], current: -1 };
     let receivedAt = 0;
     let seeking = false;
     let adjustingVolume = false;
-    let queueOpen = o.queueOpen;
-    let queueRenderKey = '';
+    let panel = o.panelAlwaysOpen ? o.panel || 'search' : o.panel;
     let port = null;
     let destroyed = false;
-    let settings = null;
+    let queueRenderKey = '';
+    let searchReq = 0;
+    let searchTimer = 0;
+    let lastQuery = '';
+    let flashTimer = 0;
+    let dragFrom = -1;
 
-    // ----- Build DOM -----
-    const container = el('div', `ytm-player${o.compact ? ' ytm-compact' : ''}`);
+    // =============== Build DOM ===============
+    const container = el(
+      'div',
+      [
+        'ytm-player',
+        o.compact && 'ytm-compact',
+        `ytm-panel-${o.panelPosition}`,
+        o.panelAlwaysOpen && 'ytm-panel-fixed',
+      ]
+        .filter(Boolean)
+        .join(' ')
+    );
+
+    // ----- Card -----
+    const card = el('div', 'ytm-card');
 
     const empty = el('div', 'ytm-empty');
-    const emptyText = el('p', 'ytm-empty-text', { textContent: 'Nothing playing on YouTube' });
-    const openYtBtn = el('button', 'ytm-pill', { type: 'button', textContent: 'Open YouTube' });
-    empty.append(emptyText, openYtBtn);
+    const emptyIcon = el('div', 'ytm-empty-icon');
+    emptyIcon.appendChild(icon('note'));
+    const emptyText = el('p', 'ytm-empty-text', { textContent: 'Nothing playing' });
+    const emptyActions = el('div', 'ytm-empty-actions');
+    const startQueueBtn = el('button', 'ytm-pill ytm-pill-accent', { type: 'button', textContent: 'Play queue' });
+    const emptySearchBtn = el('button', 'ytm-pill', { type: 'button', textContent: 'Search' });
+    emptyActions.append(startQueueBtn, emptySearchBtn);
+    empty.append(emptyIcon, emptyText, emptyActions);
 
-    const main = el('div', 'ytm-main');
+    const now = el('div', 'ytm-now');
 
     const meta = el('div', 'ytm-meta');
+    const metaText = el('div', 'ytm-meta-text');
     const titleBtn = el('button', 'ytm-title', { type: 'button', title: 'Go to the YouTube tab' });
     const titleText = el('span', 'ytm-title-text');
     titleBtn.appendChild(titleText);
@@ -114,15 +169,21 @@
     const adBadge = el('span', 'ytm-ad', { textContent: 'Ad' });
     const channel = el('span', 'ytm-channel');
     sub.append(adBadge, channel);
+    metaText.append(titleBtn, sub);
     const focusBtn = iconButton('openTab', 'Go to the YouTube tab', 'ytm-focus');
-    meta.append(el('div', 'ytm-meta-text'), focusBtn);
-    meta.firstChild.append(titleBtn, sub);
+    meta.append(metaText, focusBtn);
+
+    const blockedNote = el('div', 'ytm-blocked');
+    blockedNote.append(
+      el('span', '', { textContent: 'Firefox blocked playback in the background tab.' }),
+      el('button', 'ytm-link', { type: 'button', textContent: 'Open it once' })
+    );
 
     const progress = el('div', 'ytm-progress');
     const curTime = el('span', 'ytm-time', { textContent: '0:00' });
     const seekBar = el('input', 'ytm-range ytm-seek', { type: 'range', min: '0', max: '0', step: 'any', value: '0' });
     seekBar.setAttribute('aria-label', 'Seek');
-    const durTime = el('span', 'ytm-time', { textContent: '0:00' });
+    const durTime = el('span', 'ytm-time ytm-time-end', { textContent: '0:00' });
     progress.append(curTime, seekBar, durTime);
 
     const controls = el('div', 'ytm-controls');
@@ -131,7 +192,9 @@
     const nextBtn = iconButton('next', 'Next');
     controls.append(prevBtn, playBtn, nextBtn);
 
-    const secondary = el('div', 'ytm-secondary');
+    now.append(meta, blockedNote, progress, controls);
+
+    const toolbar = el('div', 'ytm-toolbar');
     const muteBtn = iconButton('volume', 'Mute');
     const volBar = el('input', 'ytm-range ytm-volume', { type: 'range', min: '0', max: '100', step: '1', value: '100' });
     volBar.setAttribute('aria-label', 'Volume');
@@ -139,18 +202,67 @@
     volGroup.append(muteBtn, volBar);
     const rateSelect = el('select', 'ytm-rate', { title: 'Playback speed' });
     rateSelect.setAttribute('aria-label', 'Playback speed');
-    for (const r of RATES) rateSelect.appendChild(el('option', '', { value: String(r), textContent: `${r}\u00d7` }));
+    for (const r of RATES) rateSelect.appendChild(el('option', '', { value: String(r), textContent: `${r}×` }));
     const ccBtn = iconButton('cc', 'Captions', 'ytm-toggle');
-    const queueBtn = iconButton('queue', 'Queue', 'ytm-toggle');
-    secondary.append(volGroup, rateSelect, ccBtn, queueBtn);
+    const searchBtn = iconButton('search', 'Search YouTube', 'ytm-toggle ytm-panel-btn');
+    searchBtn.dataset.panel = 'search';
+    const queueBtn = iconButton('queue', 'Queue', 'ytm-toggle ytm-panel-btn');
+    queueBtn.dataset.panel = 'queue';
+    const queueCount = el('span', 'ytm-count');
+    queueBtn.appendChild(queueCount);
+    toolbar.append(volGroup, rateSelect, ccBtn, searchBtn, queueBtn);
 
-    const queue = el('div', 'ytm-queue');
+    card.append(empty, now, toolbar);
+
+    // ----- Panel -----
+    const panelEl = el('div', 'ytm-panel');
+    const tabs = el('div', 'ytm-tabs');
+    tabs.setAttribute('role', 'tablist');
+    const searchTab = el('button', 'ytm-tab', { type: 'button', textContent: 'Search' });
+    searchTab.dataset.panel = 'search';
+    const queueTab = el('button', 'ytm-tab', { type: 'button' });
+    queueTab.dataset.panel = 'queue';
+    const queueTabLabel = el('span', '', { textContent: 'Queue' });
+    const queueTabCount = el('span', 'ytm-tab-count');
+    queueTab.append(queueTabLabel, queueTabCount);
+    for (const t of [searchTab, queueTab]) t.setAttribute('role', 'tab');
+    tabs.append(searchTab, queueTab);
+
+    // Search view
+    const searchView = el('div', 'ytm-view ytm-search-view');
+    const searchForm = el('form', 'ytm-search-form');
+    const searchIcon = el('span', 'ytm-search-icon');
+    searchIcon.appendChild(icon('search'));
+    const searchInput = el('input', 'ytm-search-input', {
+      type: 'search',
+      placeholder: 'Search YouTube',
+      autocomplete: 'off',
+      spellcheck: false,
+    });
+    searchInput.setAttribute('aria-label', 'Search YouTube');
+    searchForm.append(searchIcon, searchInput);
+    const searchStatus = el('div', 'ytm-status');
+    searchStatus.setAttribute('aria-live', 'polite');
+    const results = el('ol', 'ytm-list ytm-results');
+    searchView.append(searchForm, searchStatus, results);
+
+    // Queue view
+    const queueView = el('div', 'ytm-view ytm-queue-view');
     const queueHeader = el('div', 'ytm-queue-header');
-    const queueList = el('ol', 'ytm-queue-list');
-    queue.append(queueHeader, queueList);
+    const queueSummary = el('span', 'ytm-queue-summary');
+    const clearBtn = el('button', 'ytm-link', { type: 'button', textContent: 'Clear' });
+    queueHeader.append(queueSummary, clearBtn);
+    const queueList = el('ol', 'ytm-list ytm-queue-list');
+    const queueEmpty = el('div', 'ytm-status ytm-queue-empty');
+    queueEmpty.append(
+      el('span', '', { textContent: 'Your queue is empty. ' }),
+      el('button', 'ytm-link', { type: 'button', textContent: 'Search for something to add' })
+    );
+    queueView.append(queueHeader, queueList, queueEmpty);
 
-    main.append(meta, progress, controls, secondary, queue);
+    panelEl.append(tabs, searchView, queueView);
 
+    // ----- Footer -----
     const footer = el('div', 'ytm-footer');
     const footerButtons = {};
     const FOOTER_DEFS = {
@@ -167,11 +279,11 @@
       footer.appendChild(b);
     }
 
-    container.append(empty, main);
+    container.append(card, panelEl);
     if (o.footer.length) container.appendChild(footer);
     root.appendChild(container);
 
-    // ----- Messaging -----
+    // =============== Messaging ===============
     function connect() {
       if (destroyed) return;
       try {
@@ -181,11 +293,18 @@
         return;
       }
       port.onMessage.addListener((msg) => {
-        if (msg.type !== 'state') return;
-        state = msg.state;
-        receivedAt = performance.now();
-        render();
-        if (o.onState) o.onState(state);
+        if (msg.type === 'state') {
+          state = msg.state;
+          receivedAt = performance.now();
+          render();
+          if (o.onState) o.onState(state);
+        } else if (msg.type === 'queue') {
+          queue = msg.queue;
+          renderQueue();
+          renderEmpty();
+        } else if (msg.type === 'searchResults') {
+          if (msg.reqId === searchReq) renderResults(msg);
+        }
       });
       port.onDisconnect.addListener(() => {
         port = null;
@@ -193,16 +312,19 @@
       });
     }
 
-    function send(cmd, extra) {
+    function post(msg) {
       if (!port) return;
       try {
-        port.postMessage({ type: 'cmd', cmd, ...extra });
+        port.postMessage(msg);
       } catch (e) {
         port = null;
       }
     }
 
-    // ----- Rendering -----
+    const send = (cmd, extra) => post({ type: 'cmd', cmd, ...extra });
+    const queueOp = (op, extra) => post({ type: 'queue', op, ...extra });
+
+    // =============== Rendering: card ===============
     function liveTime() {
       if (!state) return 0;
       let t = state.currentTime;
@@ -215,16 +337,29 @@
       const t = liveTime();
       curTime.textContent = fmtTime(t);
       seekBar.value = String(t);
+      paintRange(seekBar);
+    }
+
+    function upcomingCount() {
+      return Math.max(0, queue.items.length - queue.current - 1);
+    }
+
+    function renderEmpty() {
+      const upcoming = upcomingCount();
+      startQueueBtn.hidden = !upcoming;
+      emptyText.textContent = upcoming ? `${upcoming} in your queue` : 'Nothing playing';
     }
 
     function render() {
       container.classList.toggle('ytm-has-state', !!state);
+      renderEmpty();
       if (!state) return;
 
       titleText.textContent = state.title || 'Untitled';
       titleBtn.title = state.title || '';
       channel.textContent = state.channel || '';
       adBadge.hidden = !state.ad;
+      blockedNote.hidden = !state.blocked;
       requestAnimationFrame(updateMarquee);
 
       seekBar.max = String(state.duration || 0);
@@ -239,16 +374,19 @@
       setIcon(muteBtn, state.muted || state.volume === 0 ? 'muted' : 'volume');
       muteBtn.title = state.muted ? 'Unmute' : 'Mute';
       if (!adjustingVolume) volBar.value = String(state.muted ? 0 : state.volume);
+      paintRange(volBar);
 
       const rate = String(state.rate || 1);
       if (![...rateSelect.options].some((op) => op.value === rate)) {
-        rateSelect.appendChild(el('option', '', { value: rate, textContent: `${rate}\u00d7` }));
+        rateSelect.appendChild(el('option', '', { value: rate, textContent: `${rate}×` }));
       }
       if (document.activeElement !== rateSelect) rateSelect.value = rate;
 
       ccBtn.hidden = !state.captionsAvailable;
       ccBtn.setAttribute('aria-pressed', String(!!state.captionsOn));
 
+      // Highlight the queue row that's playing (it may change without a queue update).
+      queueRenderKey = '';
       renderQueue();
     }
 
@@ -258,44 +396,144 @@
       titleBtn.style.setProperty('--ytm-marquee-shift', `${-Math.max(0, overflow + 16)}px`);
     }
 
-    function renderQueue() {
-      const q = state && state.queue;
-      queueBtn.hidden = !q || !q.items.length;
-      queueBtn.setAttribute('aria-pressed', String(queueOpen && !queueBtn.hidden));
-      container.classList.toggle('ytm-queue-open', queueOpen && !queueBtn.hidden);
-      if (!q) return;
+    // =============== Panel ===============
+    function setPanel(next) {
+      if (o.panelAlwaysOpen && !next) return;
+      panel = next;
+      container.classList.toggle('ytm-panel-open', !!panel);
+      container.dataset.panel = panel || '';
+      for (const b of [searchBtn, queueBtn]) b.setAttribute('aria-pressed', String(panel === b.dataset.panel));
+      for (const t of [searchTab, queueTab]) t.setAttribute('aria-selected', String(panel === t.dataset.panel));
+      if (panel === 'search') requestAnimationFrame(() => searchInput.focus());
+      if (panel === 'queue') scrollCurrentIntoView();
+      if (o.onPanelChange) o.onPanelChange(panel);
+    }
 
-      const key = `${q.type}|${q.items.map((i) => `${i.videoId}${i.current ? '*' : ''}`).join(',')}`;
+    function togglePanel(name) {
+      if (o.panelAlwaysOpen) setPanel(name);
+      else setPanel(panel === name ? null : name);
+    }
+
+    // =============== Search ===============
+    function runSearch(force = false) {
+      const q = searchInput.value.trim();
+      if (!q) {
+        lastQuery = '';
+        results.replaceChildren();
+        searchStatus.textContent = '';
+        return;
+      }
+      if (q === lastQuery && !force) return;
+      lastQuery = q;
+      searchReq++;
+      searchStatus.textContent = 'Searching…';
+      container.classList.add('ytm-searching');
+      post({ type: 'search', query: q, reqId: searchReq });
+    }
+
+    function renderResults(msg) {
+      container.classList.remove('ytm-searching');
+      if (msg.error) {
+        searchStatus.textContent = `Search failed: ${msg.error}`;
+        results.replaceChildren();
+        return;
+      }
+      const list = msg.results || [];
+      searchStatus.textContent = list.length ? '' : 'No results';
+      results.replaceChildren(...list.map(resultRow));
+      results.scrollTop = 0;
+    }
+
+    function resultRow(item) {
+      const li = el('li', 'ytm-row');
+      const main = el('button', 'ytm-row-main', { type: 'button', title: `Play "${item.title}" now` });
+      const text = el('span', 'ytm-row-text');
+      text.append(
+        el('span', 'ytm-row-title', { textContent: item.title }),
+        el('span', 'ytm-row-sub', { textContent: [item.channel, item.duration].filter(Boolean).join(' · ') })
+      );
+      main.appendChild(text);
+      main.addEventListener('click', () => {
+        queueOp('playNow', { item });
+        flash(`Playing "${item.title}"`);
+      });
+
+      const actions = el('span', 'ytm-row-actions');
+      const nextB = iconButton('playNext', 'Play next', 'ytm-row-btn');
+      nextB.addEventListener('click', () => {
+        queueOp('playNext', { item });
+        flash('Playing next');
+      });
+      const addB = iconButton('add', 'Add to queue', 'ytm-row-btn');
+      addB.addEventListener('click', () => {
+        queueOp('add', { item });
+        flash('Added to queue');
+      });
+      actions.append(nextB, addB);
+      li.append(main, actions);
+      return li;
+    }
+
+    function flash(message) {
+      searchStatus.textContent = message;
+      searchStatus.classList.add('ytm-flash');
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => {
+        searchStatus.classList.remove('ytm-flash');
+        if (searchStatus.textContent === message) searchStatus.textContent = '';
+      }, 1800);
+    }
+
+    // =============== Queue ===============
+    function renderQueue() {
+      const upcoming = upcomingCount();
+      queueCount.textContent = upcoming ? String(upcoming) : '';
+      queueCount.hidden = !upcoming;
+      queueTabCount.textContent = upcoming ? String(upcoming) : '';
+
+      const playingId = state && state.videoId;
+      const key = `${queue.current}|${playingId}|${queue.items.map((i) => i.uid).join(',')}`;
       if (key === queueRenderKey) return;
       queueRenderKey = key;
 
-      const current = q.items.findIndex((i) => i.current);
-      queueHeader.textContent =
-        q.type === 'playlist'
-          ? `${q.title || 'Playlist'}${current >= 0 ? ` \u00b7 ${current + 1}/${q.items.length}` : ''}`
-          : 'Up next';
+      const hasItems = queue.items.length > 0;
+      queueEmpty.hidden = hasItems;
+      queueHeader.hidden = !hasItems;
+      queueSummary.textContent = upcoming ? `${upcoming} up next` : 'End of queue';
 
-      const rows = q.items.map((item) => {
-        const li = el('li', `ytm-queue-item${item.current ? ' ytm-current' : ''}`);
-        const b = el('button', 'ytm-queue-btn', { type: 'button' });
-        const idx = el('span', 'ytm-queue-index', {
-          textContent: item.current ? '\u25b6' : q.type === 'playlist' ? String(item.index + 1) : '',
-        });
-        const text = el('span', 'ytm-queue-text');
-        text.append(
-          el('span', 'ytm-queue-title', { textContent: item.title }),
-          el('span', 'ytm-queue-channel', { textContent: item.channel })
-        );
-        b.append(idx, text);
-        b.title = item.title;
-        b.addEventListener('click', () =>
-          send('playQueueItem', { index: item.index, videoId: item.videoId, queueType: q.type })
-        );
-        li.appendChild(b);
-        return li;
-      });
-      queueList.replaceChildren(...rows);
-      if (queueOpen) scrollCurrentIntoView();
+      queueList.replaceChildren(...queue.items.map((item, index) => queueRow(item, index, playingId)));
+      if (panel === 'queue') scrollCurrentIntoView();
+    }
+
+    function queueRow(item, index, playingId) {
+      const isCurrent = index === queue.current;
+      const played = index < queue.current;
+      const li = el(
+        'li',
+        ['ytm-row', 'ytm-qrow', isCurrent && 'ytm-current', played && 'ytm-played'].filter(Boolean).join(' ')
+      );
+      li.draggable = true;
+      li.dataset.index = String(index);
+
+      const handle = el('span', 'ytm-handle', { title: 'Drag to reorder' });
+      handle.appendChild(icon(isCurrent && playingId === item.videoId ? 'play' : 'drag'));
+
+      const main = el('button', 'ytm-row-main', { type: 'button', title: `Play "${item.title}"` });
+      const text = el('span', 'ytm-row-text');
+      text.append(
+        el('span', 'ytm-row-title', { textContent: item.title }),
+        el('span', 'ytm-row-sub', { textContent: [item.channel, item.duration].filter(Boolean).join(' · ') })
+      );
+      main.appendChild(text);
+      main.addEventListener('click', () => queueOp('play', { index }));
+
+      const actions = el('span', 'ytm-row-actions');
+      const removeB = iconButton('close', 'Remove from queue', 'ytm-row-btn');
+      removeB.addEventListener('click', () => queueOp('remove', { index }));
+      actions.append(removeB);
+
+      li.append(handle, main, actions);
+      return li;
     }
 
     function scrollCurrentIntoView() {
@@ -303,31 +541,94 @@
       if (cur) cur.scrollIntoView({ block: 'nearest' });
     }
 
+    // Drag to reorder
+    queueList.addEventListener('dragstart', (e) => {
+      const li = e.target.closest && e.target.closest('.ytm-qrow');
+      if (!li) return;
+      dragFrom = Number(li.dataset.index);
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(dragFrom)); // Firefox needs data to start a drag
+      li.classList.add('ytm-dragging');
+    });
+    queueList.addEventListener('dragover', (e) => {
+      if (dragFrom < 0) return;
+      const li = e.target.closest && e.target.closest('.ytm-qrow');
+      if (!li) return;
+      e.preventDefault();
+      clearDropMarks();
+      const r = li.getBoundingClientRect();
+      li.classList.add(e.clientY < r.top + r.height / 2 ? 'ytm-drop-before' : 'ytm-drop-after');
+    });
+    queueList.addEventListener('drop', (e) => {
+      if (dragFrom < 0) return;
+      e.preventDefault();
+      const li = e.target.closest && e.target.closest('.ytm-qrow');
+      if (li) {
+        let to = Number(li.dataset.index);
+        const r = li.getBoundingClientRect();
+        if (e.clientY >= r.top + r.height / 2) to += 1;
+        if (dragFrom < to) to -= 1;
+        if (to !== dragFrom) queueOp('move', { from: dragFrom, to });
+      }
+      endDrag();
+    });
+    queueList.addEventListener('dragend', endDrag);
+
+    function clearDropMarks() {
+      for (const n of queueList.querySelectorAll('.ytm-drop-before, .ytm-drop-after')) {
+        n.classList.remove('ytm-drop-before', 'ytm-drop-after');
+      }
+    }
+
+    function endDrag() {
+      dragFrom = -1;
+      clearDropMarks();
+      for (const n of queueList.querySelectorAll('.ytm-dragging')) n.classList.remove('ytm-dragging');
+    }
+
+    // =============== Settings ===============
     function applySettings(s) {
-      settings = s;
       if (footerButtons.window) footerButtons.window.hidden = !s.windowEnabled;
       if (footerButtons.sidebar) footerButtons.sidebar.hidden = !s.sidebarEnabled || !browser.sidebarAction;
     }
 
-    // ----- Events -----
-    openYtBtn.addEventListener('click', () => send('openYouTube'));
+    // =============== Events ===============
+    startQueueBtn.addEventListener('click', () => send('togglePlay'));
+    emptySearchBtn.addEventListener('click', () => setPanel('search'));
+    queueEmpty.querySelector('button').addEventListener('click', () => setPanel('search'));
     titleBtn.addEventListener('click', () => send('focusTab'));
     focusBtn.addEventListener('click', () => send('focusTab'));
+    blockedNote.querySelector('button').addEventListener('click', () => send('focusTab'));
     playBtn.addEventListener('click', () => send('togglePlay'));
     prevBtn.addEventListener('click', () => send('prev'));
     nextBtn.addEventListener('click', () => send('next'));
     ccBtn.addEventListener('click', () => send('toggleCaptions'));
     muteBtn.addEventListener('click', () => send('toggleMute'));
+    clearBtn.addEventListener('click', () => queueOp('clear'));
 
-    queueBtn.addEventListener('click', () => {
-      queueOpen = !queueOpen;
-      renderQueue();
-      if (queueOpen) scrollCurrentIntoView();
+    for (const b of [searchBtn, queueBtn]) b.addEventListener('click', () => togglePanel(b.dataset.panel));
+    for (const t of [searchTab, queueTab]) t.addEventListener('click', () => setPanel(t.dataset.panel));
+
+    searchForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      clearTimeout(searchTimer);
+      runSearch(true);
     });
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => runSearch(false), SEARCH_DEBOUNCE_MS);
+    });
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !o.panelAlwaysOpen) setPanel(null);
+      e.stopPropagation(); // don't let the host page's shortcuts react to typing
+    });
+    // Keep typing inside the overlay from triggering the host page's shortcuts.
+    for (const type of ['keyup', 'keypress']) searchInput.addEventListener(type, (e) => e.stopPropagation());
 
     seekBar.addEventListener('input', () => {
       seeking = true;
       curTime.textContent = fmtTime(Number(seekBar.value));
+      paintRange(seekBar);
     });
     seekBar.addEventListener('change', () => {
       const time = Number(seekBar.value);
@@ -341,6 +642,7 @@
 
     volBar.addEventListener('input', () => {
       adjustingVolume = true;
+      paintRange(volBar);
       send('setVolume', { volume: Number(volBar.value) });
     });
     volBar.addEventListener('change', () => {
@@ -352,6 +654,7 @@
         e.preventDefault();
         const v = Math.max(0, Math.min(100, Number(volBar.value) + (e.deltaY < 0 ? 5 : -5)));
         volBar.value = String(v);
+        paintRange(volBar);
         send('setVolume', { volume: v });
       },
       { passive: false }
@@ -379,8 +682,8 @@
 
     function onKeyDown(e) {
       if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+      if (isTextInput(e.target)) return;
       const tag = (e.target && e.target.tagName) || '';
-      if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag) && e.key !== ' ') return;
       if (/^(BUTTON|SELECT)$/.test(tag) && (e.key === ' ' || e.key === 'Enter')) return;
       const actions = {
         ' ': () => send('togglePlay'),
@@ -389,6 +692,8 @@
         p: () => send('prev'),
         m: () => send('toggleMute'),
         c: () => send('toggleCaptions'),
+        '/': () => setPanel('search'),
+        q: () => togglePanel('queue'),
         ArrowRight: () => state && send('seek', { time: liveTime() + 5 }),
         ArrowLeft: () => state && send('seek', { time: Math.max(0, liveTime() - 5) }),
       };
@@ -404,15 +709,11 @@
     }, TICK_MS);
 
     const unsubscribe = YTMiniSettings.onChange(applySettings);
-    YTMiniSettings.get().then((s) => {
-      applySettings(s);
-      if (!('queueOpen' in opts) && s.queueOpenByDefault) {
-        queueOpen = true;
-        renderQueue();
-      }
-    });
+    YTMiniSettings.get().then(applySettings);
 
     render();
+    renderQueue();
+    setPanel(panel);
     connect();
 
     return {
@@ -420,9 +721,10 @@
       get state() {
         return state;
       },
-      get settings() {
-        return settings;
+      get queue() {
+        return queue;
       },
+      setPanel,
       destroy() {
         destroyed = true;
         clearInterval(ticker);

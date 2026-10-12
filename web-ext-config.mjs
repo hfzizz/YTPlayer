@@ -5,5 +5,7 @@ export default {
     'web-ext-config.mjs',
     'README.md',
     'web-ext-artifacts',
+    'test',
+    'docs',
   ],
 };

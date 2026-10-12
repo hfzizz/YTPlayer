@@ -6,6 +6,9 @@ YTMiniMountPage({
   settingKey: 'windowEnabled',
   modeName: 'mini window',
   playerOptions: {
+    panelPosition: 'above',
+    panelAlwaysOpen: true,
+    panel: 'queue',
     footer: ['settings'],
     keyboard: true,
     onState(state) {

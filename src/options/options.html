@@ -10,7 +10,9 @@
     <main>
       <h1>YT Mini Player</h1>
       <p class="lead">
-        Controls the YouTube tab that played most recently. The video keeps playing in that tab; the mini player is a remote.
+        Search YouTube, build a queue and control playback from anywhere. The audio plays in a YouTube tab (opened for you
+        when needed); this is the remote. In Zen Browser, Zen's own media player and your media keys skip through your
+        queue too.
       </p>
 
       <section>
@@ -29,10 +31,10 @@
         </label>
         <label class="row">
           <span>
-            <strong>Floating overlay on other websites</strong>
-            <small>A draggable player on every non-YouTube page while something is playing. Needs access to all websites.</small>
+            <strong>Floating player on websites</strong>
+            <small>A draggable, PiP-style player card with search and queue on every non-YouTube page. Needs access to all websites.</small>
             <small class="warn" id="overlay-permission" hidden>
-              Website access isn't granted, so the overlay can't appear.
+              Website access isn't granted, so the floating player can't appear.
               <button type="button" class="ytm-pill" id="grant">Grant access</button>
             </small>
           </span>
@@ -56,9 +58,9 @@
       </section>
 
       <section>
-        <h2>Overlay</h2>
+        <h2>Floating player</h2>
         <label class="row">
-          <span><strong>Start position</strong><small>Where the overlay first appears. Changing this resets a dragged position.</small></span>
+          <span><strong>Start position</strong><small>Where the floating player first appears. Changing this resets a dragged position.</small></span>
           <select data-setting="overlayCorner">
             <option value="bottom-right">Bottom right</option>
             <option value="bottom-left">Bottom left</option>
@@ -73,10 +75,16 @@
       </section>
 
       <section>
-        <h2>Queue</h2>
+        <h2>Playback</h2>
         <label class="row">
-          <span><strong>Show queue by default</strong><small>Expand the playlist / up next list when the player opens.</small></span>
-          <input type="checkbox" data-setting="queueOpenByDefault" />
+          <span>
+            <strong>Pin the player tab</strong>
+            <small>
+              When you play something and no YouTube tab is open, a YouTube tab is opened to do the playing. It's shown for
+              a moment (Firefox won't start audio in a tab that was never visited), then you're switched back.
+            </small>
+          </span>
+          <input type="checkbox" data-setting="pinPlayerTab" />
         </label>
       </section>
 
@@ -89,7 +97,8 @@
         <button type="button" class="ytm-pill" id="manage-shortcuts" hidden>Change shortcuts</button>
         <p class="hint">
           Inside the popup, sidebar and mini window: <kbd>Space</kbd>/<kbd>K</kbd> play/pause, <kbd>N</kbd> next,
-          <kbd>P</kbd> previous, <kbd>M</kbd> mute, <kbd>C</kbd> captions, <kbd>←</kbd>/<kbd>→</kbd> seek 5s.
+          <kbd>P</kbd> previous, <kbd>M</kbd> mute, <kbd>C</kbd> captions, <kbd>←</kbd>/<kbd>→</kbd> seek 5s,
+          <kbd>/</kbd> search, <kbd>Q</kbd> queue.
         </p>
       </section>
 

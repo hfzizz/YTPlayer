@@ -17,24 +17,7 @@ globalThis.YTMiniSelectors = {
 
   captionsButton: '.ytp-subtitles-button',
   nextButton: '.ytp-next-button',
-  prevButton: '.ytp-prev-button',
 
-  // Playlist panel (watch page with &list=...). It can exist twice; we use the one with items.
-  playlistPanel: 'ytd-playlist-panel-renderer',
-  playlistItem: 'ytd-playlist-panel-video-renderer',
-  playlistTitle: ['#header-description h3 a', '#header-description .title', '.header .title', 'h3 yt-formatted-string'],
-  playlistItemTitle: ['#video-title'],
-  playlistItemChannel: ['#byline', '#channel-name'],
-  playlistItemLink: 'a#wc-endpoint, a[href*="/watch"]',
-
-  // "Up next" recommendations in the watch-page sidebar (new lockup + legacy compact renderer).
-  upNextContainer: 'ytd-watch-next-secondary-results-renderer',
-  upNextItem: 'yt-lockup-view-model, ytd-compact-video-renderer',
-  upNextTitle: ['.yt-lockup-metadata-view-model__title', '#video-title', 'h3'],
-  upNextChannel: [
-    '.yt-content-metadata-view-model__metadata-row span',
-    'ytd-channel-name #text',
-    '#channel-name',
-  ],
-  upNextLink: 'a[href*="/watch?v="]',
+  // "Cancel" on the end-of-video autoplay countdown.
+  autonavCancel: '.ytp-autonav-endscreen-upnext-cancel-button',
 };

@@ -5,14 +5,14 @@
 (() => {
   const DEFAULTS = {
     popupEnabled: true,
-    overlayEnabled: false,
+    overlayEnabled: true, // still needs the optional "all websites" permission
     sidebarEnabled: true,
     windowEnabled: true,
     clickAction: 'popup', // 'popup' | 'window'
     overlayStartCollapsed: false,
     overlayCorner: 'bottom-right', // 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
     badgeEnabled: true,
-    queueOpenByDefault: false,
+    pinPlayerTab: true, // pin the YouTube tab the extension opens for playback
   };
 
   const api = {

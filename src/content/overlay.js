@@ -2,8 +2,8 @@
 
 /* global YTMini, YTMiniSettings */
 
-// Floating mini player injected into non-YouTube pages (only when the overlay
-// mode is enabled). Lives in a closed Shadow DOM so page CSS can't touch it.
+// Floating "PiP-style" music player card injected into non-YouTube pages (only
+// when enabled). Lives in a closed Shadow DOM so page CSS can't touch it.
 (() => {
   if (globalThis.__ytMiniOverlay || window.top !== window) return;
   globalThis.__ytMiniOverlay = true;
@@ -16,51 +16,80 @@
   let host = null;
   let wrap = null;
   let player = null;
-  let hasState = false;
+  let cssLink = null;
+  let resizeObserver = null;
+  let hasContent = false;
   let dismissedVideoId = null;
   let currentVideoId = null;
   let placed = false;
-  let cssLink = null;
+  let lastRect = null;
 
   function build() {
     host = document.createElement('ytmini-overlay');
     host.style.cssText = 'all:initial;position:fixed;z-index:2147483647;left:0;top:0;display:none;';
     const shadow = host.attachShadow({ mode: 'closed' });
 
-    const link = (cssLink = document.createElement('link'));
-    link.rel = 'stylesheet';
-    link.href = browser.runtime.getURL('src/shared/player.css');
-    shadow.appendChild(link);
+    cssLink = document.createElement('link');
+    cssLink.rel = 'stylesheet';
+    cssLink.href = browser.runtime.getURL('src/shared/player.css');
+    shadow.appendChild(cssLink);
 
     wrap = document.createElement('div');
     wrap.className = 'ytm-overlay';
 
     const bar = document.createElement('div');
     bar.className = 'ytm-overlay-bar';
-    const label = document.createElement('span');
-    label.className = 'ytm-overlay-label';
-    label.textContent = 'YT Mini';
+    bar.title = 'Drag to move';
+    const grip = document.createElement('span');
+    grip.className = 'ytm-grip';
     const collapseBtn = barButton('collapse', 'Collapse');
     const closeBtn = barButton('close', 'Hide until the next video');
-    bar.append(label, collapseBtn, closeBtn);
+    bar.append(grip, collapseBtn, closeBtn);
 
     const body = document.createElement('div');
     wrap.append(bar, body);
     shadow.appendChild(wrap);
     (document.body || document.documentElement).appendChild(host);
 
-    player = YTMini.mountPlayer(body, { compact: true, footer: ['window', 'settings'], onState });
+    player = YTMini.mountPlayer(body, {
+      compact: true,
+      panelPosition: 'above',
+      footer: [],
+      onState,
+      onPanelChange: () => {
+        if (wrap.classList.contains('ytm-collapsed')) setCollapsed(false, true);
+      },
+    });
+    // The queue arrives separately from the player state.
+    const poll = setInterval(() => {
+      if (!player) return clearInterval(poll);
+      updateVisibility();
+    }, 1000);
 
     collapseBtn.addEventListener('click', () => setCollapsed(!wrap.classList.contains('ytm-collapsed'), true));
     closeBtn.addEventListener('click', () => {
-      dismissedVideoId = currentVideoId;
+      dismissedVideoId = currentVideoId || '__idle__';
       updateVisibility();
     });
     setupDrag(bar);
 
+    // Keep the edge nearest the screen edge fixed when the card grows/shrinks
+    // (e.g. opening Search at the bottom of the screen grows it upwards).
+    resizeObserver = new ResizeObserver(() => {
+      if (!placed || host.style.display === 'none') return;
+      const rect = host.getBoundingClientRect();
+      if (lastRect && rect.height !== lastRect.height) {
+        const anchoredBottom = lastRect.top + lastRect.height / 2 > window.innerHeight / 2;
+        if (anchoredBottom) clampAndApply({ x: rect.left, y: lastRect.bottom - rect.height });
+        else clampAndApply({ x: rect.left, y: rect.top });
+      }
+      lastRect = host.getBoundingClientRect();
+    });
+    resizeObserver.observe(wrap);
+
     // Avoid a flash of unstyled content: only reveal once the stylesheet has loaded.
-    link.addEventListener('load', () => {
-      link.dataset.loaded = '1';
+    cssLink.addEventListener('load', () => {
+      cssLink.dataset.loaded = '1';
       updateVisibility();
     });
 
@@ -81,37 +110,40 @@
 
     function setCollapsed(collapsed, persist) {
       wrap.classList.toggle('ytm-collapsed', collapsed);
+      if (collapsed) player.setPanel(null);
       collapseBtn.replaceChildren(YTMini.icon(collapsed ? 'expand' : 'collapse'));
       collapseBtn.title = collapsed ? 'Expand' : 'Collapse';
       collapseBtn.setAttribute('aria-label', collapseBtn.title);
       if (persist) browser.storage.local.set({ [COLLAPSED_KEY]: collapsed });
-      requestAnimationFrame(() => clampAndApply(currentPos()));
     }
-
   }
 
   function teardown() {
+    if (resizeObserver) resizeObserver.disconnect();
     if (player) player.destroy();
     if (host) host.remove();
-    host = wrap = player = cssLink = null;
+    host = wrap = player = cssLink = resizeObserver = lastRect = null;
     placed = false;
   }
 
   function onState(state) {
-    hasState = !!state;
     currentVideoId = state ? state.videoId : null;
-    if (dismissedVideoId && dismissedVideoId !== currentVideoId) dismissedVideoId = null;
+    if (dismissedVideoId && dismissedVideoId !== (currentVideoId || '__idle__')) dismissedVideoId = null;
     updateVisibility();
   }
 
+  // Shown while something is loaded in a YouTube tab, or there's something queued.
   function updateVisibility() {
-    if (!host) return;
-    const visible = hasState && !dismissedVideoId && cssLink.dataset.loaded === '1';
+    if (!host || !player) return;
+    const q = player.queue;
+    hasContent = !!player.state || (q && q.items.length > q.current + 1);
+    const visible = hasContent && !dismissedVideoId && cssLink.dataset.loaded === '1';
     host.style.display = visible ? 'block' : 'none';
     if (visible && !placed) {
       placed = true;
       browser.storage.local.get(POS_KEY).then((r) => {
         clampAndApply(r[POS_KEY] || cornerPos());
+        lastRect = host.getBoundingClientRect();
       });
     }
   }
@@ -120,7 +152,7 @@
 
   function size() {
     const r = host.getBoundingClientRect();
-    return { w: r.width || 320, h: r.height || 200 };
+    return { w: r.width || 340, h: r.height || 200 };
   }
 
   function cornerPos() {
@@ -163,6 +195,7 @@
       if (!start) return;
       start = null;
       wrap.classList.remove('ytm-dragging');
+      lastRect = host.getBoundingClientRect();
       browser.storage.local.set({ [POS_KEY]: currentPos() });
     };
     handle.addEventListener('pointerup', end);
@@ -173,10 +206,13 @@
     if (host && placed) clampAndApply(currentPos());
   });
 
-  // Keep every tab's overlay in the same spot when it is moved in another tab.
+  // Keep every tab's card in the same spot when it is moved in another tab.
   browser.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !host) return;
-    if (changes[POS_KEY] && changes[POS_KEY].newValue && placed) clampAndApply(changes[POS_KEY].newValue);
+    if (area !== 'local' || !host || !placed) return;
+    if (changes[POS_KEY] && changes[POS_KEY].newValue) {
+      clampAndApply(changes[POS_KEY].newValue);
+      lastRect = host.getBoundingClientRect();
+    }
   });
 
   // ----- Settings -----
