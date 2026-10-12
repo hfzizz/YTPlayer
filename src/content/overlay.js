@@ -23,6 +23,7 @@
   let currentVideoId = null;
   let placed = false;
   let lastRect = null;
+  let zenMod = false; // Zen's media card has our search/queue (Zen mod active)
 
   function build() {
     host = document.createElement('ytmini-overlay');
@@ -56,6 +57,10 @@
       panelPosition: 'above',
       footer: [],
       onState,
+      onEnv: (env) => {
+        zenMod = !!env.zenMod;
+        updateVisibility();
+      },
       onPanelChange: () => {
         if (wrap.classList.contains('ytm-collapsed')) setCollapsed(false, true);
       },
@@ -137,7 +142,8 @@
     if (!host || !player) return;
     const q = player.queue;
     hasContent = !!player.state || (q && q.items.length > q.current + 1);
-    const visible = hasContent && !dismissedVideoId && cssLink.dataset.loaded === '1';
+    const replacedByZen = zenMod && settings.hideCardWithZenMod;
+    const visible = hasContent && !dismissedVideoId && !replacedByZen && cssLink.dataset.loaded === '1';
     host.style.display = visible ? 'block' : 'none';
     if (visible && !placed) {
       placed = true;
@@ -226,6 +232,7 @@
     }
     if (!host) build();
     else if (cornerChanged && placed) clampAndApply(cornerPos());
+    updateVisibility();
   }
 
   YTMiniSettings.get().then(apply);

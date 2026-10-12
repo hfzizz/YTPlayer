@@ -13,6 +13,7 @@
     overlayCorner: 'bottom-right', // 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
     badgeEnabled: true,
     pinPlayerTab: true, // pin the YouTube tab the extension opens for playback
+    hideCardWithZenMod: true, // hide the floating card while the Zen mod's player is active
   };
 
   const api = {

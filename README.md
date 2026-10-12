@@ -24,7 +24,7 @@ A PiP-style **music player for regular YouTube**. It's a floating card that stay
   - stops when it runs out
   - played songs stay visible, dimmed
 - **Plays in the background.** If no YouTube tab is open, one is opened (pinned by default) to do the actual playing. It's shown for a moment, because Firefox won't start audio in a tab that was never visited, and then you're switched back.
-- **Zen Browser and media keys.** Next/previous in Zen's built-in media player, and your keyboard's media keys, skip through **your queue**.
+- **Zen Browser and media keys.** Next/previous in Zen's built-in media player, and your keyboard's media keys, skip through **your queue**. With the optional [Zen mod](#zen-browser-extend-zens-media-player), Zen's media card also gets Search and Queue.
 - **Controls:** seek, play/pause, previous/next, volume and mute, speed from 0.25× to 2×, captions.
 - **Other places to use it:**
   - toolbar popup
@@ -45,6 +45,38 @@ A PiP-style **music player for regular YouTube**. It's a floating card that stay
   - `←`/`→`: seek 5 seconds
   - `/`: search
   - `Q`: queue
+
+## Zen Browser: extend Zen's media player
+
+Zen has its own media card at the bottom of the sidebar. With the optional **Zen mod** in [`zen-mod/`](zen-mod/), that card gets 🔍 **Search** and ☰ **Queue** buttons. Clicking one makes the card grow upward and shows our search or queue right inside it.
+
+<img src="docs/zen-card-mockup.png" width="70%" alt="Mock-up: Zen's media card with the Search panel open">
+
+<sub>Mock-up: Zen's card is drawn in HTML here; the panel inside it is the real extension page.</sub>
+
+**Why a mod?** Zen's media card is part of the browser's own interface, and extensions are sandboxed away from it. A Zen *mod* (a userChrome script) can change Zen's interface. This one is small: it adds the buttons and embeds the extension's panel page (`src/zen/panel.html`) in the card. Search, queue and playback all still run in the extension. The mod runs with full browser privileges, so read [`ytmini-zen.uc.js`](zen-mod/ytmini-zen.uc.js) before installing it.
+
+- **Next/previous on Zen's card follow your queue**, even without the mod.
+- While the mod is active, our floating card hides itself, so you only see one player. You can turn this off in Settings → Zen Browser.
+
+**Install with [Sine](https://github.com/CosmoCreeper/Sine)** (Zen mod manager):
+
+1. Install the YT Mini Player extension first.
+2. In Sine's settings, allow installing JavaScript mods from unofficial sources.
+3. Add a mod from a repository: `hfzizz/YTPlayer`, folder `zen-mod`.
+4. Restart Zen.
+
+**Install with [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig)** (manual):
+
+1. Set up fx-autoconfig for your Zen profile (see its README).
+2. Copy `zen-mod/ytmini-zen.uc.js` into `<profile>/chrome/JS/`.
+3. Copy `zen-mod/chrome.css` into `<profile>/chrome/CSS/` (or `@import` it from `userChrome.css`).
+4. Restart Zen and clear the startup cache if fx-autoconfig asks you to.
+
+**Limits:**
+- Zen only shows its media card while media plays in a tab you're *not* looking at. That's Zen's own behaviour. On the YouTube tab itself, use the toolbar popup.
+- The buttons appear on every media card, not only YouTube's. They always control the YouTube player.
+- `theme.json` follows Sine's mod format as far as it's publicly documented. If Sine doesn't pick up the script, use the fx-autoconfig steps.
 
 ## Install (development)
 
@@ -95,5 +127,5 @@ YouTube tab (plays the audio)        background.js                         UIs
 ## Known limits
 
 - Firefox doesn't let extensions create a real always-on-top window, so the floating card stays on top inside the browser, not over other apps.
-- The extension can't add a search box or queue to Zen's own media player. That's Zen's interface. It can only make Zen's next/previous buttons follow your queue.
+- The extension alone can't add a search box or queue to Zen's own media player, because that's Zen's interface. The optional [Zen mod](#zen-browser-extend-zens-media-player) does it.
 - If Firefox still blocks audio in the player tab, the card shows a notice. Open the tab once, or allow autoplay for youtube.com using the permissions icon in the address bar.

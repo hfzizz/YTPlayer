@@ -79,3 +79,16 @@ YTMiniSettings.onChange(render);
 browser.permissions.onAdded.addListener(updatePermissionNote);
 browser.permissions.onRemoved.addListener(updatePermissionNote);
 renderShortcuts();
+
+// Live "Zen mod detected" status, from the background's env messages.
+(function watchZenMod() {
+  const status = document.getElementById('zen-status');
+  const port = browser.runtime.connect({ name: 'ui' });
+  port.onMessage.addListener((msg) => {
+    if (msg.type !== 'env') return;
+    status.textContent = msg.zenMod
+      ? 'Zen mod detected: Search and Queue are available on Zen\'s media card.'
+      : 'Zen mod not detected.';
+  });
+  port.onDisconnect.addListener(() => setTimeout(watchZenMod, 1000));
+})();

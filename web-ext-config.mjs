@@ -7,5 +7,6 @@ export default {
     'web-ext-artifacts',
     'test',
     'docs',
+    'zen-mod',
   ],
 };

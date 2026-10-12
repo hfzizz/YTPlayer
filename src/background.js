@@ -20,6 +20,9 @@ const RETURN_FOCUS_TIMEOUT_MS = 8000;
 
 const ytTabs = new Map(); // tabId -> { port, state, connectedAt }
 const uiPorts = new Set();
+// UI ports opened by the Zen mod's panel inside Zen's media card. While one is
+// connected, the mod is installed and active.
+const zenPorts = new Set();
 let settings = { ...YTMiniSettings.DEFAULTS };
 let queue = { items: [], current: -1 };
 let lastBadge = '';
@@ -86,6 +89,14 @@ function broadcastQueue() {
       // tab is going away
     }
   }
+}
+
+function envMessage() {
+  return { type: 'env', zenMod: zenPorts.size > 0 };
+}
+
+function broadcastEnv() {
+  postAll(uiPorts, envMessage());
 }
 
 function sendToActive(msg) {
@@ -424,17 +435,24 @@ browser.runtime.onConnect.addListener(async (port) => {
     uiPorts.add(port);
     port.onMessage.addListener(async (msg) => {
       await queueReady;
-      if (msg.type === 'cmd') handleUiCommand(msg);
+      if (msg.type === 'hello') {
+        if (msg.zen && !zenPorts.has(port)) {
+          zenPorts.add(port);
+          if (zenPorts.size === 1) broadcastEnv();
+        }
+      } else if (msg.type === 'cmd') handleUiCommand(msg);
       else if (msg.type === 'queue') handleQueueOp(msg);
       else if (msg.type === 'search') handleSearch(port, msg);
     });
     port.onDisconnect.addListener(() => {
       uiPorts.delete(port);
+      if (zenPorts.delete(port) && zenPorts.size === 0) broadcastEnv();
       const ctl = searches.get(port);
       if (ctl) ctl.abort();
       searches.delete(port);
     });
     port.postMessage({ type: 'state', state: currentState() });
+    port.postMessage(envMessage());
     await queueReady;
     port.postMessage({ type: 'queue', queue });
   }

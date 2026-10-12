@@ -155,5 +155,22 @@ const ids = (qq) => qq.items.map(i => i.videoId).join(',');
   const m = t.ui.sent.find(x => x.type === 'searchResults');
   ok(m && m.reqId === 7 && m.results[0].title === 'Result for abc', 'search results returned to UI');
 }
+{
+  // Zen mod presence: a UI port that says hello with zen:true turns env.zenMod on
+  const t = await boot();
+  const lastEnv = (p) => p.sent.filter(m => m.type === 'env').at(-1);
+  ok(lastEnv(t.ui) && lastEnv(t.ui).zenMod === false, 'env.zenMod false by default');
+  const zen = port('ui'); t.browser.runtime.onConnect.fire(zen); await tick();
+  zen.onMessage.fire({ type: 'hello', zen: true }); await tick();
+  ok(lastEnv(t.ui).zenMod === true, 'zen hello turns env.zenMod on for other UIs');
+  const zen2 = port('ui'); t.browser.runtime.onConnect.fire(zen2); await tick();
+  zen2.onMessage.fire({ type: 'hello', zen: true }); await tick();
+  zen.onDisconnect.fire(); await tick();
+  ok(lastEnv(t.ui).zenMod === true, 'still on while another zen port is connected');
+  zen2.onDisconnect.fire(); await tick();
+  ok(lastEnv(t.ui).zenMod === false, 'off when the last zen port disconnects');
+  const late = port('ui'); t.browser.runtime.onConnect.fire(late); await tick();
+  ok(lastEnv(late).zenMod === false, 'new UI gets current env on connect');
+}
 console.log(`${pass} passed, ${fail} failed`);
 process.exitCode = fail ? 1 : 0;

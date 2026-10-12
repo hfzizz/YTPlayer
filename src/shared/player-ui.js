@@ -97,6 +97,8 @@
   /**
    * Mount a mini player into `root`.
    * opts.compact        smaller card (floating overlay)
+   * opts.card           false = panel only, no player card (Zen's media card is the player)
+   * opts.zen            identifies the UI embedded in Zen's media card by the Zen mod
    * opts.panelPosition  'below' (popup/window) or 'above' (overlay/sidebar) the card
    * opts.panelAlwaysOpen  panel is always shown (sidebar/window); otherwise toggled from the card
    * opts.panel          initially open panel: 'search' | 'queue' | null
@@ -104,10 +106,13 @@
    * opts.keyboard       keyboard shortcuts on the document (extension pages only)
    * opts.onState        callback(state|null) on every state update
    * opts.onPanelChange  callback(panel|null) when the panel opens/closes/switches
+   * opts.onEnv          callback({ zenMod }) when the environment changes
    * opts.onFooterAction callback(action) after a footer button is used
    */
   function mountPlayer(root, opts = {}) {
     const o = {
+      card: true,
+      zen: false,
       compact: false,
       panelPosition: 'below',
       panelAlwaysOpen: false,
@@ -140,6 +145,7 @@
         o.compact && 'ytm-compact',
         `ytm-panel-${o.panelPosition}`,
         o.panelAlwaysOpen && 'ytm-panel-fixed',
+        !o.card && 'ytm-no-card',
       ]
         .filter(Boolean)
         .join(' ')
@@ -279,7 +285,8 @@
       footer.appendChild(b);
     }
 
-    container.append(card, panelEl);
+    if (o.card) container.append(card);
+    container.append(panelEl);
     if (o.footer.length) container.appendChild(footer);
     root.appendChild(container);
 
@@ -304,12 +311,15 @@
           renderEmpty();
         } else if (msg.type === 'searchResults') {
           if (msg.reqId === searchReq) renderResults(msg);
+        } else if (msg.type === 'env') {
+          if (o.onEnv) o.onEnv(msg);
         }
       });
       port.onDisconnect.addListener(() => {
         port = null;
         if (!destroyed) setTimeout(connect, 1000);
       });
+      post({ type: 'hello', zen: !!o.zen });
     }
 
     function post(msg) {

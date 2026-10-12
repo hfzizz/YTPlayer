@@ -153,3 +153,7 @@ code {
   color: var(--ytm-text-2);
   text-align: center;
 }
+
+.hint a {
+  color: var(--ytm-text);
+}
