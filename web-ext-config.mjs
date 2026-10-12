@@ -8,5 +8,6 @@ export default {
     'test',
     'docs',
     'zen-mod',
+    'dist',
   ],
 };

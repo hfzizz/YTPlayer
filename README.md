@@ -11,6 +11,21 @@ A PiP-style **music player for regular YouTube**. It's a floating card that stay
   <img src="docs/sidebar.png" width="25%" alt="Zen-style sidebar player">
 </p>
 
+## Install in Zen (or Firefox)
+
+**1. The extension**
+1. Download the latest `yt_mini_player-*.xpi` from [Releases](https://github.com/hfzizz/YTPlayer/releases).
+2. Drag it onto the Zen window, or go to `about:addons` → ⚙ → **Install Add-on From File…**.
+3. The settings page opens. Click **Grant access** so the floating player can appear on websites.
+
+**2. Zen only: Search and Queue on Zen's media card**
+1. Install [Sine](https://github.com/CosmoCreeper/Sine) with its installer from the Releases page, then restart Zen.
+2. In Zen's Settings, open the **Sine** section and turn on installing **JavaScript mods from unofficial sources**.
+3. Add a mod from a repository: `hfzizz/YTPlayer`, folder `zen-mod`. Restart Zen.
+4. Check it: play a YouTube video and switch to another tab. Zen's media card at the bottom of the sidebar now has 🔍 and ☰. Settings → *Zen Browser* in the extension says **"Zen mod detected"**.
+
+> **Why Sine?** Zen's built-in *Mods* setting only supports CSS (themes), and adding working buttons and a panel needs JavaScript. Sine adds JS-mod support to Zen. Without it you still get Zen's next/previous following your queue, and search/queue in the floating card, popup and sidebar.
+
 ## Features
 
 - **Floating player card on every website.** Drag it anywhere, collapse it to one slim row, or hide it until the next song. It shows the title and channel only, with no video.
@@ -70,13 +85,28 @@ Zen has its own media card at the bottom of the sidebar. With the optional **Zen
 
 1. Set up fx-autoconfig for your Zen profile (see its README).
 2. Copy `zen-mod/ytmini-zen.uc.js` into `<profile>/chrome/JS/`.
-3. Copy `zen-mod/chrome.css` into `<profile>/chrome/CSS/` (or `@import` it from `userChrome.css`).
-4. Restart Zen and clear the startup cache if fx-autoconfig asks you to.
+3. Copy `zen-mod/chrome.css` into `<profile>/chrome/CSS/` **renamed to `ytmini-zen.uc.css`**. fx-autoconfig only loads `*.uc.css` files.
+4. In `about:support`, click **Clear startup cache…**, then restart Zen.
 
 **Limits:**
 - Zen only shows its media card while media plays in a tab you're *not* looking at. That's Zen's own behaviour. On the YouTube tab itself, use the toolbar popup.
 - The buttons appear on every media card, not only YouTube's. They always control the YouTube player.
 - `theme.json` follows Sine's mod format as far as it's publicly documented. If Sine doesn't pick up the script, use the fx-autoconfig steps.
+
+## Releasing a signed build (maintainer)
+
+Firefox and Zen only keep extensions permanently if Mozilla has signed them. Signing as an *unlisted* add-on is free and doesn't publish anything on the add-ons store.
+
+One-time setup:
+1. Create API keys at <https://addons.mozilla.org/developers/addon/api/key/> (sign in with a Firefox account).
+2. In this repo, go to **Settings → Secrets and variables → Actions** and add two secrets: `AMO_JWT_ISSUER` (the "JWT issuer") and `AMO_JWT_SECRET` (the "JWT secret").
+
+For each release:
+1. Bump `version` in `manifest.json`. Mozilla won't sign the same version twice.
+2. Go to **Actions → Release signed extension → Run workflow**, or push a tag like `v0.3.0`.
+3. After a few minutes, the signed `.xpi` appears under [Releases](https://github.com/hfzizz/YTPlayer/releases).
+
+Locally: `AMO_JWT_ISSUER=… AMO_JWT_SECRET=… npm run sign` writes the `.xpi` to `dist/`.
 
 ## Install (development)
 
