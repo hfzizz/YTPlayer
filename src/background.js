@@ -14,6 +14,7 @@ const OVERLAY_ID = 'ytmini-overlay';
 const OVERLAY_FILES = ['src/shared/settings.js', 'src/shared/player-ui.js', 'src/content/overlay.js'];
 const PAGE_MATCHES = ['http://*/*', 'https://*/*'];
 const YOUTUBE_MATCHES = ['*://*.youtube.com/*'];
+const YOUTUBE_FILES = ['src/content/selectors.js', 'src/content/youtube.js'];
 const DEFAULT_WINDOW = { width: 380, height: 640 };
 const HISTORY_KEEP = 50; // finished songs kept (hidden) so "previous" can go back
 const RETURN_FOCUS_TIMEOUT_MS = 8000;
@@ -318,10 +319,25 @@ function handleQueueOp(msg) {
 
 // Closing the floating player hides it in every tab until the user reopens it
 // (popup button, shortcut or settings page).
+//
+// overlayClosed is three-state:
+//   true      closed by the user (stays hidden everywhere)
+//   false     shown by the user (shows even when idle or when the Zen mod is active)
+//   undefined automatic: shown while something plays or is queued, unless the
+//             Zen mod's player has taken over
 async function toggleFloating(show) {
   const { overlayClosed } = await browser.storage.local.get('overlayClosed');
-  const closed = typeof show === 'boolean' ? !show : !overlayClosed;
-  await browser.storage.local.set({ overlayClosed: closed });
+  const visible = typeof show === 'boolean' ? !show : floatingVisible(overlayClosed);
+  await browser.storage.local.set({ overlayClosed: visible });
+}
+
+// Same rule as src/content/overlay.js updateVisibility().
+function floatingVisible(overlayClosed) {
+  if (overlayClosed === true) return false;
+  if (overlayClosed === false) return true;
+  const hasContent = !!currentState() || queue.upNext.length > 0;
+  const replacedByZen = zenPorts.size > 0 && settings.hideCardWithZenMod;
+  return hasContent && !replacedByZen;
 }
 
 // ---------- Search ----------
@@ -388,11 +404,17 @@ function applyAction() {
 
 // The overlay is registered dynamically so it only runs on other sites when the
 // user turned it on and granted the "all websites" permission.
-async function syncOverlay() {
+// force: re-register and re-inject even if already registered (after an
+// extension update the copies in open tabs are dead).
+async function syncOverlay({ force = false } = {}) {
   try {
     const granted = await browser.permissions.contains({ origins: ['<all_urls>'] });
     const want = settings.overlayEnabled && granted;
-    const registered = await browser.scripting.getRegisteredContentScripts({ ids: [OVERLAY_ID] });
+    let registered = await browser.scripting.getRegisteredContentScripts({ ids: [OVERLAY_ID] });
+    if (force && registered.length) {
+      await browser.scripting.unregisterContentScripts({ ids: [OVERLAY_ID] });
+      registered = [];
+    }
 
     if (want && !registered.length) {
       await browser.scripting.registerContentScripts([
@@ -557,11 +579,27 @@ browser.action.onClicked.addListener(() => {
   else browser.runtime.openOptionsPage();
 });
 
-browser.runtime.onInstalled.addListener(({ reason }) => {
+browser.runtime.onInstalled.addListener(async ({ reason }) => {
   // The floating player needs the optional "all websites" permission; the
   // settings page explains it and has the button to grant it.
   if (reason === 'install') browser.runtime.openOptionsPage();
+  if (reason === 'install' || reason === 'update') {
+    // Scripts from a previous version are dead in tabs that were already open:
+    // put fresh copies in, so nothing needs a reload.
+    settings = await YTMiniSettings.get();
+    await injectIntoOpenYouTubeTabs();
+    await syncOverlay({ force: true });
+  }
 });
+
+async function injectIntoOpenYouTubeTabs() {
+  const tabs = await browser.tabs.query({ url: YOUTUBE_MATCHES });
+  await Promise.all(
+    tabs.map((t) =>
+      browser.scripting.executeScript({ target: { tabId: t.id }, files: YOUTUBE_FILES }).catch(() => {})
+    )
+  );
+}
 
 browser.permissions.onAdded.addListener(syncOverlay);
 browser.permissions.onRemoved.addListener(syncOverlay);

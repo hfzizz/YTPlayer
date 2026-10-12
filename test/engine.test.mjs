@@ -50,8 +50,14 @@ function makeBrowser(presetLocal = {}) {
     windows: { update: async () => {}, create: async () => {} },
     action: { setPopup() {}, setBadgeText() {}, setBadgeBackgroundColor() {}, setBadgeTextColor() {}, setTitle() {}, onClicked: ev() },
     commands: { onCommand: ev() },
-    permissions: { contains: async () => false, onAdded: ev(), onRemoved: ev() },
-    scripting: { getRegisteredContentScripts: async () => [], registerContentScripts: async () => {}, unregisterContentScripts: async () => {} },
+    permissions: { contains: async () => b._granted || false, onAdded: ev(), onRemoved: ev() },
+    _exec: [], _registered: [],
+    scripting: {
+      getRegisteredContentScripts: async () => b._registered.map((id) => ({ id })),
+      registerContentScripts: async (list) => { for (const x of list) b._registered.push(x.id); b._regCount = (b._regCount || 0) + 1; },
+      unregisterContentScripts: async () => { b._registered.length = 0; },
+      executeScript: async (o) => { b._exec.push({ tabId: o.target.tabId, files: o.files }); },
+    },
   };
   return b;
 }
@@ -171,12 +177,47 @@ const loads = (yt) => yt.sent.filter(m => m.cmd === 'load').map(m => m.videoId).
   ok(nowId(t) === 'a2' && upNext(t) === 'a3,a4' && t.lastQueue().historyCount === 1, 'old queue migrated: ' + JSON.stringify(t.lastQueue()).slice(0, 80));
 }
 {
-  // Floating player toggle (popup button / shortcut)
+  // Floating player toggle (popup button / shortcut / settings): flips what's visible now
   const t = await boot();
   await t.cmd('toggleFloating'); await tick();
-  ok(t.browser._local.overlayClosed === true, 'toggleFloating hides');
+  ok(t.browser._local.overlayClosed === false, 'idle (card hidden automatically): toggle shows it');
   t.browser.commands.onCommand.fire('toggle-floating-player'); await tick(); await tick();
-  ok(t.browser._local.overlayClosed === false, 'shortcut shows again');
+  ok(t.browser._local.overlayClosed === true, 'shortcut hides it again');
+  await t.cmd('toggleFloating'); await tick();
+  ok(t.browser._local.overlayClosed === false, 'closed: toggle shows it');
+
+  // Automatic mode while something plays: toggle hides
+  delete t.browser._local.overlayClosed;
+  const yt = port('yt', 100); t.browser.runtime.onConnect.fire(yt); await tick();
+  await ytState(yt, { videoId: 'p1' });
+  await t.cmd('toggleFloating'); await tick();
+  ok(t.browser._local.overlayClosed === true, 'playing (card shown automatically): toggle hides it');
+
+  // Zen mod active hides the card automatically -> toggle shows it (overrides)
+  delete t.browser._local.overlayClosed;
+  const zen = port('ui'); t.browser.runtime.onConnect.fire(zen); await tick();
+  zen.onMessage.fire({ type: 'hello', zen: true }); await tick();
+  await t.cmd('toggleFloating'); await tick();
+  ok(t.browser._local.overlayClosed === false, 'Zen mod hiding it: toggle shows it anyway');
+}
+{
+  // After an extension update: fresh scripts go into open tabs
+  const t = await boot();
+  t.browser._granted = true;
+  t.browser._registered.push('ytmini-overlay'); // left over from the previous version
+  t.browser.tabs.query = async (q) => {
+    const all = [{ id: 7, url: 'https://www.youtube.com/watch?v=x' }, { id: 8, url: 'https://example.com/' }];
+    const wantYT = JSON.stringify(q.url || '').includes('youtube');
+    return all.filter((x) => (wantYT ? x.url.includes('youtube') : true));
+  };
+  await Promise.all(t.browser.runtime.onInstalled.fire({ reason: 'update' }));
+  await tick();
+  const yt = t.browser._exec.find((e) => e.tabId === 7 && e.files.includes('src/content/youtube.js'));
+  const ov = t.browser._exec.find((e) => e.tabId === 8 && e.files.includes('src/content/overlay.js'));
+  ok(!!yt, 'update: youtube.js re-injected into the open YouTube tab');
+  ok(!!ov, 'update: overlay re-injected into open pages');
+  ok(!t.browser._exec.some((e) => e.tabId === 7 && e.files.includes('src/content/overlay.js')), 'no overlay on YouTube');
+  ok(t.browser._regCount >= 1 && t.browser._registered.includes('ytmini-overlay'), 'overlay re-registered');
 }
 {
   // Search routed through background

@@ -729,19 +729,29 @@
     }, TICK_MS);
 
     // Floating-player toggle shows whether the card is currently shown.
+    let floatingShortcut = '';
     function syncFloatingButton(closed) {
       const b = footerButtons.floating;
       if (!b) return;
       b.classList.add('ytm-toggle');
-      b.setAttribute('aria-pressed', String(!closed));
-      b.title = closed ? 'Show the floating player' : 'Hide the floating player';
+      b.setAttribute('aria-pressed', String(closed !== true));
+      const keys = floatingShortcut ? ` (${floatingShortcut})` : ' (no shortcut set)';
+      b.title = `${closed === true ? 'Show' : 'Show / hide'} the floating player${keys}`;
       b.setAttribute('aria-label', b.title);
     }
     const onLocalChange = (changes, area) => {
-      if (area === 'local' && changes.overlayClosed) syncFloatingButton(!!changes.overlayClosed.newValue);
+      if (area === 'local' && changes.overlayClosed) syncFloatingButton(changes.overlayClosed.newValue);
     };
     if (footerButtons.floating) {
-      browser.storage.local.get('overlayClosed').then((r) => syncFloatingButton(!!r.overlayClosed));
+      const refresh = () => browser.storage.local.get('overlayClosed').then((r) => syncFloatingButton(r.overlayClosed));
+      if (browser.commands && browser.commands.getAll) {
+        browser.commands.getAll().then((cmds) => {
+          const c = cmds.find((x) => x.name === 'toggle-floating-player');
+          floatingShortcut = (c && c.shortcut) || '';
+          refresh();
+        });
+      }
+      refresh();
       browser.storage.onChanged.addListener(onLocalChange);
     }
 
