@@ -102,15 +102,17 @@ function renderCrossfade() {
 }
 crossfade.addEventListener('input', renderCrossfade);
 
-// Show / hide the floating player in every tab.
+// Show / hide the floating player in every tab (same toggle as the popup button
+// and the shortcut, so it accounts for what's currently visible).
 const toggleFloatingBtn = document.getElementById('toggle-floating');
 async function renderFloatingButton() {
   const { overlayClosed } = await browser.storage.local.get('overlayClosed');
-  toggleFloatingBtn.textContent = overlayClosed ? 'Show' : 'Hide';
+  toggleFloatingBtn.textContent = overlayClosed === true ? 'Show' : overlayClosed === false ? 'Hide' : 'Show / hide';
 }
-toggleFloatingBtn.addEventListener('click', async () => {
-  const { overlayClosed } = await browser.storage.local.get('overlayClosed');
-  await browser.storage.local.set({ overlayClosed: !overlayClosed });
+toggleFloatingBtn.addEventListener('click', () => {
+  const port = browser.runtime.connect({ name: 'ui' });
+  port.postMessage({ type: 'cmd', cmd: 'toggleFloating' });
+  setTimeout(() => port.disconnect(), 1000);
 });
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.overlayClosed) renderFloatingButton();

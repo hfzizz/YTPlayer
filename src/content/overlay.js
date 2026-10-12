@@ -37,7 +37,7 @@
   let cssLink = null;
   let collapseBtn = null;
   let resizeObserver = null;
-  let closed = false;
+  let closed; // true = closed by the user, false = shown by the user, undefined = automatic
   let size = null;
   let placed = false;
   let lastRect = null;
@@ -47,6 +47,9 @@
   let mode = 'full';
 
   function build() {
+    // Cards left behind by an older copy of the extension (e.g. before an
+    // update) are dead: they no longer respond. Remove them.
+    for (const old of document.querySelectorAll('ytmini-overlay')) old.remove();
     host = document.createElement('ytmini-overlay');
     host.style.cssText = 'all:initial;position:fixed;z-index:2147483647;left:0;top:0;display:none;';
     const shadow = host.attachShadow({ mode: 'closed' });
@@ -130,7 +133,7 @@
     });
 
     browser.storage.local.get([SIZE_KEY, CLOSED_KEY, 'overlayCollapsed']).then((r) => {
-      closed = !!r[CLOSED_KEY];
+      closed = r[CLOSED_KEY];
       let saved = r[SIZE_KEY] || null;
       // First run with "start collapsed": begin as the slim bar.
       if (!saved && settings.overlayStartCollapsed && r.overlayCollapsed === undefined) {
@@ -159,14 +162,17 @@
     placed = false;
   }
 
-  // Shown while something is loaded in a YouTube tab or queued, unless the user
-  // closed it (in any tab) or Zen's own media card has taken over.
+  // Automatic: shown while something is loaded in a YouTube tab or queued,
+  // unless Zen's own media card has taken over. The user's show/close wins.
   function updateVisibility() {
     if (!host || !player) return;
     const q = player.queue;
     const hasContent = !!player.state || (q && q.upNext && q.upNext.length > 0);
     const replacedByZen = zenMod && settings.hideCardWithZenMod;
-    const visible = hasContent && !closed && !replacedByZen && cssLink.dataset.loaded === '1';
+    // An explicit "show" wins: the card appears even when idle (to search) or
+    // when the Zen mod's player is active.
+    const wanted = closed === false || (closed !== true && hasContent && !replacedByZen);
+    const visible = wanted && cssLink.dataset.loaded === '1';
     host.style.display = visible ? 'block' : 'none';
     if (visible && !placed) {
       placed = true;
@@ -350,7 +356,7 @@
   browser.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if (changes[CLOSED_KEY]) {
-      closed = !!changes[CLOSED_KEY].newValue;
+      closed = changes[CLOSED_KEY].newValue;
       updateVisibility();
     }
     if (!host) return;

@@ -24,6 +24,10 @@ A PiP-style **music player for regular YouTube**. It's a floating card that stay
 3. Add a mod from a repository by typing `hfzizz/zen-ytmini` (no folder), then restart Zen.
 4. Check it: play a YouTube video and switch to another tab. Zen's media card at the bottom of the sidebar now has 🔍 and ☰. Settings → *Zen Browser* in the extension says **"Zen mod detected"**.
 
+> **Where's the extension button in Zen?** Zen puts extension icons in the 🧩 **Extensions** (puzzle-piece) menu at the right of the address bar. Open it, find **YT Mini Player**, and pin it to the toolbar. In compact mode the toolbar only appears when you hover the top edge of the window.
+>
+> **Shortcut not working?** Another Zen or Firefox shortcut may already use `Alt+Shift+F`, and the browser's shortcut wins. Pick another one in `about:addons` → ⚙ → **Manage Extension Shortcuts**. The popup's floating-player button shows the shortcut currently set.
+
 > **Why Sine?** Zen's built-in *Mods* setting only supports CSS (themes), and adding working buttons and a panel needs JavaScript. Sine adds JS-mod support to Zen. Without it you still get Zen's next/previous following your queue, and search/queue in the floating card, popup and sidebar.
 
 ## Features
