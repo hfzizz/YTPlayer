@@ -1,0 +1,72 @@
+{
+  "manifest_version": 3,
+  "name": "YT Mini Player",
+  "version": "0.3.0",
+  "description": "A mini player for regular YouTube: control the playing YouTube tab from a popup, sidebar, detached window or floating overlay.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "yt-mini-player@hfzizz",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  },
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg",
+    "128": "icons/icon.svg"
+  },
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": ["*://*.youtube.com/*"],
+  "optional_host_permissions": ["<all_urls>"],
+  "background": {
+    "scripts": ["src/shared/settings.js", "src/search.js", "src/background.js"]
+  },
+  "action": {
+    "default_title": "YT Mini Player",
+    "default_icon": "icons/icon.svg",
+    "default_popup": "src/popup/popup.html"
+  },
+  "sidebar_action": {
+    "default_title": "YT Mini Player",
+    "default_icon": "icons/icon.svg",
+    "default_panel": "src/sidebar/sidebar.html",
+    "open_at_install": false
+  },
+  "options_ui": {
+    "page": "src/options/options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://www.youtube.com/*", "*://m.youtube.com/*"],
+      "js": ["src/content/selectors.js", "src/content/youtube.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/shared/player.css"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "commands": {
+    "toggle-play": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "Play / pause"
+    },
+    "next-video": {
+      "suggested_key": { "default": "Alt+Shift+Right" },
+      "description": "Next video"
+    },
+    "prev-video": {
+      "suggested_key": { "default": "Alt+Shift+Left" },
+      "description": "Previous video"
+    },
+    "open-mini-window": {
+      "suggested_key": { "default": "Alt+Shift+M" },
+      "description": "Open the detached mini window"
+    }
+  }
+}

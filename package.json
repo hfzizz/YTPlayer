@@ -1,0 +1,16 @@
+{
+  "name": "yt-mini-player",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Firefox mini player extension for regular YouTube",
+  "scripts": {
+    "lint": "web-ext lint",
+    "start": "web-ext run",
+    "build": "web-ext build --overwrite-dest",
+    "test": "node test/engine.test.mjs",
+    "sign": "web-ext sign --channel=unlisted --api-key=$AMO_JWT_ISSUER --api-secret=$AMO_JWT_SECRET --artifacts-dir=dist"
+  },
+  "devDependencies": {
+    "web-ext": "^8.3.0"
+  }
+}

@@ -1,0 +1,60 @@
+/* Panel inside Zen's media card: blend into the card, no extra chrome. */
+
+:root {
+  /* Defaults; the Zen mod overrides these with Zen's colours (inline on <html>). */
+  --ytm-zen-bg: transparent;
+  --ytm-zen-fg: #f1f1f1;
+  --ytm-zen-accent: #ff0033;
+}
+
+body.ytm-zen {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--ytm-zen-bg);
+  color: var(--ytm-zen-fg);
+}
+
+body.ytm-zen #root {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ytm-zen .ytm-player {
+  --ytm-text: var(--ytm-zen-fg);
+  --ytm-accent: var(--ytm-zen-accent);
+  --ytm-card: transparent;
+  --ytm-surface: color-mix(in srgb, var(--ytm-zen-fg) 10%, transparent);
+  --ytm-surface-hover: color-mix(in srgb, var(--ytm-zen-fg) 18%, transparent);
+  --ytm-text-2: color-mix(in srgb, var(--ytm-zen-fg) 65%, transparent);
+  --ytm-line: color-mix(in srgb, var(--ytm-zen-fg) 12%, transparent);
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.ytm-zen .ytm-panel {
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.ytm-zen .ytm-tabs {
+  padding: 2px 2px 0;
+}
+
+.ytm-zen .ytm-search-form {
+  margin: 6px 2px 2px;
+}
+
+.ytm-zen .ytm-search-input {
+  background: color-mix(in srgb, var(--ytm-zen-fg) 6%, transparent);
+  border-color: var(--ytm-line);
+}
+
+.ytm-zen .ytm-list {
+  padding: 2px 0;
+}

@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>YT Mini Player — Settings</title>
+    <link rel="stylesheet" href="../shared/player.css" />
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body class="ytm-page ytm-options">
+    <main>
+      <h1>YT Mini Player</h1>
+      <p class="lead">
+        Search YouTube, build a queue and control playback from anywhere. The audio plays in a YouTube tab (opened for you
+        when needed); this is the remote. In Zen Browser, Zen's own media player and your media keys skip through your
+        queue too.
+      </p>
+
+      <section>
+        <h2>Player modes</h2>
+        <label class="row">
+          <span><strong>Toolbar popup</strong><small>Click the toolbar icon to open the mini player.</small></span>
+          <input type="checkbox" data-setting="popupEnabled" />
+        </label>
+        <label class="row">
+          <span><strong>Sidebar</strong><small>Mini player in Firefox's sidebar (View → Sidebar → YT Mini Player).</small></span>
+          <input type="checkbox" data-setting="sidebarEnabled" />
+        </label>
+        <label class="row">
+          <span><strong>Detached mini window</strong><small>A small separate window you can place anywhere.</small></span>
+          <input type="checkbox" data-setting="windowEnabled" />
+        </label>
+        <label class="row">
+          <span>
+            <strong>Floating player on websites</strong>
+            <small>A draggable, PiP-style player card with search and queue on every non-YouTube page. Needs access to all websites.</small>
+            <small class="warn" id="overlay-permission" hidden>
+              Website access isn't granted, so the floating player can't appear.
+              <button type="button" class="ytm-pill" id="grant">Grant access</button>
+            </small>
+          </span>
+          <input type="checkbox" data-setting="overlayEnabled" id="overlay-toggle" />
+        </label>
+      </section>
+
+      <section>
+        <h2>Toolbar button</h2>
+        <label class="row">
+          <span><strong>When clicked</strong><small>Used when both the popup and the mini window are enabled.</small></span>
+          <select data-setting="clickAction">
+            <option value="popup">Open the popup</option>
+            <option value="window">Open the mini window</option>
+          </select>
+        </label>
+        <label class="row">
+          <span><strong>Play state badge</strong><small>Show ▶ / ❚❚ on the toolbar icon.</small></span>
+          <input type="checkbox" data-setting="badgeEnabled" />
+        </label>
+      </section>
+
+      <section>
+        <h2>Floating player</h2>
+        <label class="row">
+          <span><strong>Start position</strong><small>Where the floating player first appears. Changing this resets a dragged position.</small></span>
+          <select data-setting="overlayCorner">
+            <option value="bottom-right">Bottom right</option>
+            <option value="bottom-left">Bottom left</option>
+            <option value="top-right">Top right</option>
+            <option value="top-left">Top left</option>
+          </select>
+        </label>
+        <label class="row">
+          <span><strong>Start collapsed</strong><small>Show only the title and play controls until expanded.</small></span>
+          <input type="checkbox" data-setting="overlayStartCollapsed" />
+        </label>
+      </section>
+
+      <section>
+        <h2>Playback</h2>
+        <label class="row">
+          <span>
+            <strong>Pin the player tab</strong>
+            <small>
+              When you play something and no YouTube tab is open, a YouTube tab is opened to do the playing. It's shown for
+              a moment (Firefox won't start audio in a tab that was never visited), then you're switched back.
+            </small>
+          </span>
+          <input type="checkbox" data-setting="pinPlayerTab" />
+        </label>
+      </section>
+
+      <section>
+        <h2>Zen Browser</h2>
+        <p class="hint" id="zen-status">Zen mod not detected.</p>
+        <label class="row">
+          <span>
+            <strong>Hide the floating player when the Zen mod is active</strong>
+            <small>Zen's own media card then has Search and Queue, so you only see one player.</small>
+          </span>
+          <input type="checkbox" data-setting="hideCardWithZenMod" />
+        </label>
+        <p class="hint">
+          To add Search and Queue to Zen's media card, install the <code>zen-mod</code> folder from
+          <a href="https://github.com/hfzizz/YTPlayer#zen-browser-extend-zens-media-player" target="_blank" rel="noopener">this
+          project</a> with Sine or fx-autoconfig. See the README for steps.
+        </p>
+      </section>
+
+      <section>
+        <h2>Keyboard shortcuts</h2>
+        <ul id="shortcuts" class="shortcuts"></ul>
+        <p class="hint" id="shortcut-hint">
+          Change them in <code>about:addons</code> → gear icon → <em>Manage Extension Shortcuts</em>.
+        </p>
+        <button type="button" class="ytm-pill" id="manage-shortcuts" hidden>Change shortcuts</button>
+        <p class="hint">
+          Inside the popup, sidebar and mini window: <kbd>Space</kbd>/<kbd>K</kbd> play/pause, <kbd>N</kbd> next,
+          <kbd>P</kbd> previous, <kbd>M</kbd> mute, <kbd>C</kbd> captions, <kbd>←</kbd>/<kbd>→</kbd> seek 5s,
+          <kbd>/</kbd> search, <kbd>Q</kbd> queue.
+        </p>
+      </section>
+
+      <p class="saved" id="saved" aria-live="polite"></p>
+    </main>
+    <script src="../shared/settings.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>
